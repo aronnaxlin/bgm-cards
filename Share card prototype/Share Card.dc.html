@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0a0a0c; }
+  </style>
+</helmet>
+
+<div style="min-height: 100vh; background: #0a0a0c; display: flex; align-items: center; justify-content: center; padding: 48px; box-sizing: border-box;">
+
+  <!-- Card -->
+  <div style="position: relative; width: 500px; border-radius: 44px; corner-shape: superellipse(2.2); overflow: hidden; box-shadow: 0 32px 80px rgba(0,0,0,0.70); display: flex; flex-direction: column; min-height: 720px;">
+
+    <!-- Blurred poster background -->
+    <div style="position: absolute; inset: 0; background-image: url('{{ posterUrl }}'); background-size: cover; background-position: center; filter: blur(40px) brightness(0.42); transform: scale(1.15); z-index: 0;"></div>
+
+    <!-- Dark overlay -->
+    <div style="position: absolute; inset: 0; background: radial-gradient(ellipse at center top, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0.52) 65%, rgba(0,0,0,0.72) 100%); z-index: 1;"></div>
+
+    <!-- Main content -->
+    <div style="position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column; padding: 40px 40px 0;">
+
+      <!-- Top row: poster + info -->
+      <div style="display: flex; gap: 24px; align-items: stretch;">
+
+        <!-- Poster -->
+        <div style="flex-shrink: 0; width: 152px; aspect-ratio: 2/3; border-radius: 24px; corner-shape: superellipse(2.2); background-image: url('{{ posterUrl }}'); background-size: cover; background-position: center; box-shadow: 0 20px 52px rgba(0,0,0,0.50), 0 6px 16px rgba(0,0,0,0.28);"></div>
+
+        <!-- Info -->
+        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; min-width: 0;">
+
+          <!-- Titles -->
+          <div>
+            <h2 style="font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: {{ titleFontSize }}; font-weight: 800; line-height: 1.25; letter-spacing: -0.02em; margin: 0 0 7px; color: #f5f5f7; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ titleZh }}</h2>
+            <p style="font-family: 'Noto Sans JP', sans-serif; font-size: 13px; color: #a0a0b0; margin: 0; font-weight: 400; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;">{{ titleJa }}</p>
+          </div>
+
+          <!-- Meta + collection stats side by side -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+
+            <!-- Meta (left) -->
+            <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace; font-size: 10px; color: #a0a0b0;">
+              <div><span style="color: #f5f5f7; font-weight: 600;">{{ releaseDate }}</span> 发售</div>
+              <div><span style="color: #f5f5f7; font-weight: 600;">{{ mediaType }}</span>{{ episodesLabel }}</div>
+              <div><span style="color: #f5f5f7; font-weight: 600;">{{ staffKey1 }}</span> / {{ staffVal1 }}</div>
+              <div><span style="color: #f5f5f7; font-weight: 600;">{{ staffKey2 }}</span> / {{ staffVal2 }}</div>
+            </div>
+
+            <!-- Soft fading divider -->
+            <div style="width: 1px; align-self: stretch; flex-shrink: 0; background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.14) 20%, rgba(255,255,255,0.14) 80%, transparent);"></div>
+
+            <!-- Collection stats (right) -->
+            <div style="display: flex; flex-direction: column; gap: 7px; flex-shrink: 0;">
+              <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #f5f5f7; line-height: 1; min-width: 38px; text-align: right;">{{ collWish }}</span>
+                <span style="font-family: 'Noto Sans SC', 'PingFang SC', sans-serif; font-size: 9px; color: #a0a0b0; letter-spacing: 0.08em;">想看</span>
+              </div>
+              <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #F09199; line-height: 1; min-width: 38px; text-align: right;">{{ collDoing }}</span>
+                <span style="font-family: 'Noto Sans SC', 'PingFang SC', sans-serif; font-size: 9px; color: #a0a0b0; letter-spacing: 0.08em;">在看</span>
+              </div>
+              <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #f5f5f7; line-height: 1; min-width: 38px; text-align: right;">{{ collDone }}</span>
+                <span style="font-family: 'Noto Sans SC', 'PingFang SC', sans-serif; font-size: 9px; color: #a0a0b0; letter-spacing: 0.08em;">看过</span>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Rating + tags — unified frosted panel -->
+      <div style="display: flex; align-items: stretch; margin-top: 22px; padding: 16px 18px; border-radius: 24px; corner-shape: superellipse(2.2); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(6px);">
+
+        <!-- Left: score + rank -->
+        <div style="flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding-right: 18px;">
+          <div style="font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace; font-size: 38px; font-weight: 800; color: #F09199; line-height: 1;">{{ score }}</div>
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+            <div style="color: #F09199; font-size: 12px; letter-spacing: 2px;">{{ stars }}</div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a0a0b0;">{{ scoreCount }} 人评分</div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a0a0b0; letter-spacing: 0.06em;">RANK <span style="color: #f5f5f7; font-weight: 600;">#{{ rank }}</span></div>
+          </div>
+        </div>
+
+        <!-- Soft fading divider -->
+        <div style="width: 1px; flex-shrink: 0; background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.16) 25%, rgba(255,255,255,0.16) 75%, transparent);"></div>
+
+        <!-- Right: tags -->
+        <div style="flex: 1; display: flex; align-items: center; padding-left: 18px;">
+          <div style="display: flex; flex-wrap: wrap; gap: 7px;">
+            <sc-for list="{{ tags }}" as="tag" hint-placeholder-count="6">
+              <span style="font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', sans-serif; font-size: 11px; font-weight: 500; padding: 4px 11px; border-radius: 20px; background: rgba(240,145,153,0.12); color: rgba(245,245,247,0.82); border: 1px solid rgba(240,145,153,0.22); white-space: nowrap;">{{ tag }}</span>
+            </sc-for>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Summary -->
+      <p style="font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', sans-serif; font-size: 12px; line-height: 1.75; color: rgba(245,245,247,0.70); margin: 24px 0 28px; text-align: left; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">{{ summary }}</p>
+
+    </div>
+
+    <!-- Footer -->
+    <div style="position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; background: #f4f4f5; padding: 18px 40px; flex-shrink: 0;">
+      <!-- QR -->
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="width: 64px; height: 64px; background: #fff; border-radius: 16px; corner-shape: superellipse(2.2); padding: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; background-image: url('{{ qrUrl }}'); background-size: calc(100% - 10px); background-repeat: no-repeat; background-position: center;"></div>
+        <div style="font-family: 'Noto Sans JP', 'Noto Sans SC', sans-serif; font-size: 12px; color: #555; line-height: 1.45;">
+          <strong style="display: block; font-size: 14px; color: #111; margin-bottom: 2px; font-weight: 700;">扫码查看条目</strong>
+          bgm.tv/subject/{{ subjectId }}
+        </div>
+      </div>
+      <!-- Brand -->
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 5px;">
+        <div style="font-family: 'Noto Sans JP', sans-serif; font-size: 20px; font-weight: 900; color: #1a1a1a; letter-spacing: -0.04em; line-height: 1;">bangumi<span style="color: #F09199;">.</span>tv</div>
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #999; letter-spacing: 0.08em;">#{{ subjectId }}</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 596, &quot;height&quot;: 860 },
+  &quot;subjectId&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;297313&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;posterUrl&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;https://lain.bgm.tv/pic/cover/l/3f/fa/297313_8idsZ.jpg&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;titleZh&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;考上理想高中！温柔的三角关系入门&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;titleJa&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;合格のための！やさしい三角関系入門&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;score&quot;: { &quot;editor&quot;: &quot;float&quot;, &quot;default&quot;: 6.6, &quot;min&quot;: 0, &quot;max&quot;: 10, &quot;step&quot;: 0.1, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;scoreCount&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 138, &quot;min&quot;: 0, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;rank&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 3721, &quot;min&quot;: 1, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;tags&quot;: { &quot;editor&quot;: null, &quot;default&quot;: [&quot;百合&quot;, &quot;三角恋&quot;, &quot;校园&quot;, &quot;漫画&quot;, &quot;治愈&quot;], &quot;tsType&quot;: &quot;string[]&quot; },
+  &quot;collWish&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 624, &quot;min&quot;: 0, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;collDoing&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 89, &quot;min&quot;: 0, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;collDone&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 1432, &quot;min&quot;: 0, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;releaseDate&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;2020-08-27&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;mediaType&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;漫画&quot;, &quot;options&quot;: [&quot;漫画&quot;, &quot;动画&quot;, &quot;游戏&quot;, &quot;小说&quot;, &quot;三次元&quot;], &quot;tsType&quot;: &quot;string&quot; },
+  &quot;episodes&quot;: { &quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 11, &quot;min&quot;: 0, &quot;tsType&quot;: &quot;number&quot; },
+  &quot;staffKey1&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;作者&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;staffVal1&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;缶乃&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;staffKey2&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;出版社&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;staffVal2&quot;: { &quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;KADOKAWA&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;summary&quot;: { &quot;editor&quot;: null, &quot;default&quot;: &quot;&quot;, &quot;tsType&quot;: &quot;string&quot; }
+}">
+class Component extends DCLogic {
+  renderVals() {
+    const subjectId = this.props.subjectId ?? '297313';
+    const score = this.props.score ?? 6.6;
+    const scoreCount = this.props.scoreCount ?? 138;
+    const titleZh = this.props.titleZh ?? '考上理想高中！温柔的三角关系入门';
+    const titleJa = this.props.titleJa ?? '合格のための！やさしい三角関係入門';
+    const posterUrl = this.props.posterUrl ?? 'https://lain.bgm.tv/pic/cover/l/3f/fa/297313_8idsZ.jpg';
+    const releaseDate = this.props.releaseDate ?? '2020-08-27';
+    const mediaType = this.props.mediaType ?? '漫画';
+    const episodes = this.props.episodes ?? 11;
+    const staffKey1 = this.props.staffKey1 ?? '作者';
+    const staffVal1 = this.props.staffVal1 ?? '缶乃';
+    const staffKey2 = this.props.staffKey2 ?? '出版社';
+    const staffVal2 = this.props.staffVal2 ?? 'KADOKAWA';
+    const summary = this.props.summary ?? '『あの娘にキスと白百合を』の缶乃が描く、新提案三角関係ラブストーリーが連載開始!! 憧れの先輩と同じ高校にいきたい！その一心で勉強を頑張るもイマイチ結果がついてこない真幸。高校見学の際、きれいな先輩と出会ったことで、運命が思わぬ方向に動き出す――。好きな人がはひとりだけって、いったい誰が決めたんだろう――女の子だけのトライアングルラブストーリー!!';
+    const rank = this.props.rank ?? 3721;
+    const tags = this.props.tags ?? ['百合', '三角恋', '校园', '漫画', '治愈'];
+    const fmt = (n) => n >= 10000 ? (n / 10000).toFixed(1) + 'w' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+    const collWish = fmt(this.props.collWish ?? 624);
+    const collDoing = fmt(this.props.collDoing ?? 89);
+    const collDone = fmt(this.props.collDone ?? 1432);
+
+    // Star display
+    const rounded = Math.round(score);
+    const stars = '★'.repeat(Math.min(rounded, 5)) + '☆'.repeat(Math.max(0, 5 - rounded));
+
+    // Title font size
+    const titleFontSize = titleZh.length > 16 ? '18px' : '22px';
+
+    // Episodes label
+    const episodesLabel = episodes ? ` · ${episodes} 话` : '';
+
+    // QR URL
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=https://bgm.tv/subject/${subjectId}&color=000000&bgcolor=ffffff`;
+
+    return {
+      subjectId, score, scoreCount, stars, titleZh, titleJa, posterUrl,
+      releaseDate, mediaType, episodes, episodesLabel,
+      staffKey1, staffVal1, staffKey2, staffVal2,
+      summary, qrUrl, titleFontSize, rank, tags,
+      collWish, collDoing, collDone,
+    };
+  }
+}
+</script>
+</body>
+</html>
