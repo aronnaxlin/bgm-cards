@@ -1048,7 +1048,6 @@
     mediaLabel,
     collectionLabels,
     fmtCount,
-    renderStars,
     processSummary,
     retry,
     fetchSubject,

@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-23T13:58:55.376Z
+// 生成时间：2026-06-23T14:06:06.014Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -1051,7 +1051,6 @@
     mediaLabel,
     collectionLabels,
     fmtCount,
-    renderStars,
     processSummary,
     retry,
     fetchSubject,
