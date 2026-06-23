@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-23T13:34:49.620Z
+// 生成时间：2026-06-23T13:45:03.367Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -93,7 +93,9 @@
 
   function isAllowedHost() {
     if (typeof location === 'undefined') return false;
-    return ALLOWED_HOSTS.includes(location.hostname);
+    // hostname 不含端口，hostnames 如 bgm.tv:443 用 location.hostname 仍正确
+    const host = location.hostname.replace(/:\d+$/, '');
+    return ALLOWED_HOSTS.some(h => host === h || host.endsWith('.' + h));
   }
 
   function parseSubjectId() {
@@ -218,25 +220,41 @@
 
   async function fetchSubject(id) {
     const url = `${API_BASE}/v0/subjects/${id}`;
+    // User-Agent 是 Forbidden header，iOS WKWebView 设置会抛 TypeError，移除
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'bgm-share-card/0.1 (personal preview)' },
+      headers: { 'Accept': 'application/json' },
     });
     if (!res.ok) throw new Error(`条目数据加载失败：HTTP ${res.status}`);
     return res.json();
   }
 
-  function loadImage(src, opts = {}) {
-    return retry(async () => {
+  function loadImageRaw(src, useCORS) {
+    return new Promise((resolve, reject) => {
       const img = new Image();
-      if (opts.crossOrigin) img.crossOrigin = opts.crossOrigin;
+      if (useCORS) img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`图片加载失败：${src}`));
       img.src = src;
-      await new Promise((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error(`图片加载失败：${src}`));
-      });
-      try { await img.decode(); } catch (e) { /* decode 失败但 onload 成功时仍可用 */ }
-      return img;
-    }, { retries: 2, delay: 500 });
+    });
+  }
+
+  // 先尝试 crossOrigin，失败则不带 crossOrigin 再试（canvas 会 taint，但至少能渲染）
+  function loadImage(src, opts = {}) {
+    const wantCORS = !!opts.crossOrigin;
+    const attempt = (cors) => new Promise((resolve, reject) => {
+      const img = new Image();
+      if (cors) img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try { img.decode ? img.decode().then(() => resolve(img)).catch(() => resolve(img)) : resolve(img); }
+        catch (_) { resolve(img); }
+      };
+      img.onerror = () => reject(new Error(`图片加载失败：${src}`));
+      img.src = src;
+    });
+
+    if (!wantCORS) return attempt(false);
+
+    return attempt(true).catch(() => attempt(false));
   }
 
   function makeQRImage(url) {
@@ -930,17 +948,15 @@
       tainted: !posterImg,
     });
 
-    // toBlob 在 canvas 被污染时会抛 SecurityError；先 probe，失败则降级 toDataURL
+    // toBlob 在 canvas 被污染（SecurityError）时抛异常；自动降级 toDataURL
     let blob;
     try {
       blob = await exportPNG(canvas);
     } catch (secErr) {
       console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
-      try {
-        blob = await exportPNGFallback(canvas);
-      } catch (e2) {
-        throw new Error('图片导出失败（canvas 已污染）：' + secErr.message);
-      }
+      blob = await exportPNGFallback(canvas).catch(e2 => {
+        throw new Error('图片导出失败：' + secErr.message);
+      });
     }
     return { canvas, blob, id, data };
   }
