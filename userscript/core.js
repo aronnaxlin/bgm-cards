@@ -286,21 +286,26 @@
     return _filterSupported;
   }
 
-  // 极简 box-blur：在 offscreen canvas 上水平+垂直各扫一遍，再叠加暗色遮罩
-  function drawBlurredBackground(ctx, img, w, h, blurRadius) {
-    const off = document.createElement('canvas');
-    const scale = 0.25; // 先缩小到 1/4 再放大，天然模糊效果
-    off.width = Math.max(1, Math.round(w * scale));
-    off.height = Math.max(1, Math.round(h * scale));
-    const ox = off.getContext('2d');
-    // 把海报缩小绘入（cover 方式）
-    const ratio = Math.max(off.width / img.naturalWidth, off.height / img.naturalHeight);
-    const sw = img.naturalWidth * ratio, sh = img.naturalHeight * ratio;
-    const sx = (off.width - sw) / 2, sy = (off.height - sh) / 2;
-    ox.drawImage(img, sx, sy, sw, sh);
-    // 把模糊后的小图放大覆盖整张卡片背景
-    ctx.drawImage(off, 0, 0, w, h);
-    // 压暗：半透明黑色叠加（等效 brightness 0.42 ≈ 1 - 0.58 暗度）
+  // 多次降采样模拟 blur：每次 1/4 缩放，连做 3 次使细节彻底消失，再压暗
+  function drawBlurredBackground(ctx, img, w, h) {
+    const passes = 3;
+    let src = img;
+    let cur = null;
+    for (let i = 0; i < passes; i++) {
+      const prev = cur;
+      cur = document.createElement('canvas');
+      cur.width = Math.max(1, Math.round((prev ? prev.width : w) * 0.25));
+      cur.height = Math.max(1, Math.round((prev ? prev.height : h) * 0.25));
+      const cx = cur.getContext('2d');
+      if (i === 0) {
+        const ratio = Math.max(cur.width / img.naturalWidth, cur.height / img.naturalHeight);
+        const sw = img.naturalWidth * ratio, sh = img.naturalHeight * ratio;
+        cx.drawImage(img, (cur.width - sw) / 2, (cur.height - sh) / 2, sw, sh);
+      } else {
+        cx.drawImage(prev, 0, 0, cur.width, cur.height);
+      }
+    }
+    ctx.drawImage(cur, 0, 0, w, h);
     ctx.fillStyle = 'rgba(0,0,0,0.62)';
     ctx.fillRect(0, 0, w, h);
   }
