@@ -267,6 +267,44 @@
   // Canvas 绘制
   // ========================================================================
 
+  // ctx.filter 在 iOS Safari/Chrome 静默无效——用 1x1 canvas 实测像素是否变暗来检测
+  let _filterSupported = null;
+  function canvasFilterSupported() {
+    if (_filterSupported !== null) return _filterSupported;
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 1;
+      const x = c.getContext('2d');
+      x.fillStyle = '#fff';
+      x.fillRect(0, 0, 1, 1);
+      x.filter = 'brightness(0)';
+      x.fillRect(0, 0, 1, 1);
+      _filterSupported = x.getImageData(0, 0, 1, 1).data[0] === 0;
+    } catch (_) {
+      _filterSupported = false;
+    }
+    return _filterSupported;
+  }
+
+  // 极简 box-blur：在 offscreen canvas 上水平+垂直各扫一遍，再叠加暗色遮罩
+  function drawBlurredBackground(ctx, img, w, h, blurRadius) {
+    const off = document.createElement('canvas');
+    const scale = 0.25; // 先缩小到 1/4 再放大，天然模糊效果
+    off.width = Math.max(1, Math.round(w * scale));
+    off.height = Math.max(1, Math.round(h * scale));
+    const ox = off.getContext('2d');
+    // 把海报缩小绘入（cover 方式）
+    const ratio = Math.max(off.width / img.naturalWidth, off.height / img.naturalHeight);
+    const sw = img.naturalWidth * ratio, sh = img.naturalHeight * ratio;
+    const sx = (off.width - sw) / 2, sy = (off.height - sh) / 2;
+    ox.drawImage(img, sx, sy, sw, sh);
+    // 把模糊后的小图放大覆盖整张卡片背景
+    ctx.drawImage(off, 0, 0, w, h);
+    // 压暗：半透明黑色叠加（等效 brightness 0.42 ≈ 1 - 0.58 暗度）
+    ctx.fillStyle = 'rgba(0,0,0,0.62)';
+    ctx.fillRect(0, 0, w, h);
+  }
+
   function createCanvas() {
     const canvas = document.createElement('canvas');
     canvas.width = LAYOUT.w * LAYOUT.dpr;
@@ -473,20 +511,13 @@
       ctx.fillStyle = LAYOUT.colors.bg;
       ctx.fillRect(0, 0, LAYOUT.w, LAYOUT.h);
       const blur = 40;
-      // iOS 的 WKWebView 不支持 ctx.filter；改用 offscreen canvas + boxBlur 降级
-      if (typeof ctx.filter !== 'undefined' && ctx.filter !== null && /filter/.test(Object.keys(ctx).join(','))) {
-        // 此分支走不到（filter 是 setter），保留结构供未来用
-      }
-      try {
+      if (canvasFilterSupported()) {
         ctx.filter = `blur(${blur}px) brightness(0.42)`;
         drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
         ctx.filter = 'none';
-      } catch (_) {
-        // iOS 不支持 filter：直接绘制压暗版本
-        ctx.filter = 'none';
-        ctx.globalAlpha = 0.42;
-        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
-        ctx.globalAlpha = 1;
+      } else {
+        // iOS Safari/Chrome：ctx.filter 静默无效，用 stackBlur 降级
+        drawBlurredBackground(ctx, posterImg, LAYOUT.w, LAYOUT.h, blur);
       }
     } else {
       const grd = ctx.createLinearGradient(0, 0, LAYOUT.w, LAYOUT.h);
