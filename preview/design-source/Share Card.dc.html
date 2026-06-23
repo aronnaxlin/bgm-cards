@@ -62,15 +62,15 @@
             <div style="display: flex; flex-direction: column; gap: 7px; flex-shrink: 0; margin-right: 10px;">
               <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;">
                 <span style="font-size: 14px; font-weight: 700; color: #f5f5f7; line-height: 1; min-width: 40px; text-align: right;">{{ collWish }}</span>
-                <span style="font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif; font-size: 10px; color: #a0a0b0; letter-spacing: 0.08em;">想看</span>
+                <span style="font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif; font-size: 10px; color: #a0a0b0; letter-spacing: 0.08em;">{{ collLabelWish }}</span>
               </div>
               <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;">
                 <span style="font-size: 14px; font-weight: 700; color: #F09199; line-height: 1; min-width: 40px; text-align: right;">{{ collDoing }}</span>
-                <span style="font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif; font-size: 10px; color: #a0a0b0; letter-spacing: 0.08em;">在看</span>
+                <span style="font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif; font-size: 10px; color: #a0a0b0; letter-spacing: 0.08em;">{{ collLabelDoing }}</span>
               </div>
               <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;">
                 <span style="font-size: 14px; font-weight: 700; color: #f5f5f7; line-height: 1; min-width: 40px; text-align: right;">{{ collDone }}</span>
-                <span style="font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif; font-size: 10px; color: #a0a0b0; letter-spacing: 0.08em;">看过</span>
+                <span style="font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif; font-size: 10px; color: #a0a0b0; letter-spacing: 0.08em;">{{ collLabelDone }}</span>
               </div>
             </div>
 
@@ -192,6 +192,12 @@ class Component extends DCLogic {
     // Episodes label
     const episodesLabel = episodes ? ` · ${episodes} 话` : '';
 
+    // 收藏状态用词随条目类型变化：书=读 / 音乐=听 / 游戏=玩 / 其它=看
+    const collVerb = { 漫画: '读', 小说: '读', 音乐: '听', 游戏: '玩' }[mediaType] || '看';
+    const collLabelWish = '想' + collVerb;
+    const collLabelDoing = '在' + collVerb;
+    const collLabelDone = collVerb + '过';
+
     // QR URL
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=https://bgm.tv/subject/${subjectId}&color=000000&bgcolor=ffffff`;
 
@@ -201,6 +207,7 @@ class Component extends DCLogic {
       staffKey1, staffVal1, staffKey2, staffVal2,
       summary, qrUrl, titleFontSize, rank, tags,
       collWish, collDoing, collDone,
+      collLabelWish, collLabelDoing, collLabelDone,
     };
   }
 }

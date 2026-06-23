@@ -420,9 +420,9 @@
             </div>
             <div class="soft-divider"></div>
             <div class="coll-col">
-              <div class="coll-item"><span class="coll-num other" id="collWish">624</span><span class="coll-label">想看</span></div>
-              <div class="coll-item"><span class="coll-num doing" id="collDoing">89</span><span class="coll-label">在看</span></div>
-              <div class="coll-item"><span class="coll-num other" id="collDone">1432</span><span class="coll-label">看过</span></div>
+              <div class="coll-item"><span class="coll-num other" id="collWish">624</span><span class="coll-label" id="collWishLabel">想看</span></div>
+              <div class="coll-item"><span class="coll-num doing" id="collDoing">89</span><span class="coll-label" id="collDoingLabel">在看</span></div>
+              <div class="coll-item"><span class="coll-num other" id="collDone">1432</span><span class="coll-label" id="collDoneLabel">看过</span></div>
             </div>
           </div>
         </div>
@@ -486,6 +486,9 @@
     collWish: document.getElementById('collWish'),
     collDoing: document.getElementById('collDoing'),
     collDone: document.getElementById('collDone'),
+    collWishLabel: document.getElementById('collWishLabel'),
+    collDoingLabel: document.getElementById('collDoingLabel'),
+    collDoneLabel: document.getElementById('collDoneLabel'),
     score: document.getElementById('score'),
     stars: document.getElementById('stars'),
     scoreCount: document.getElementById('scoreCount'),
@@ -552,6 +555,16 @@
     if (platform) return platform;
     const map = { 1: '书籍', 2: '动画', 3: '音乐', 4: '游戏', 6: '三次元' };
     return map[type] || '条目';
+  }
+
+  // 收藏状态用词随条目类型变化：书=读 / 音乐=听 / 游戏=玩 / 动画·三次元=看
+  function collectionLabels(type) {
+    switch (type) {
+      case 1: return { wish: '想读', doing: '在读', done: '读过' };
+      case 3: return { wish: '想听', doing: '在听', done: '听过' };
+      case 4: return { wish: '想玩', doing: '在玩', done: '玩过' };
+      default: return { wish: '想看', doing: '在看', done: '看过' };
+    }
   }
 
   function setPoster(el, url) {
@@ -628,6 +641,11 @@
       els.collWish.textContent = fmt(collWish);
       els.collDoing.textContent = fmt(collDoing);
       els.collDone.textContent = fmt(collDone);
+
+      const collLabels = collectionLabels(data.type);
+      els.collWishLabel.textContent = collLabels.wish;
+      els.collDoingLabel.textContent = collLabels.doing;
+      els.collDoneLabel.textContent = collLabels.done;
 
       const scoreStr = score ? score.toFixed(1) : '0.0';
       const [scoreInt, scoreDec] = scoreStr.split('.');

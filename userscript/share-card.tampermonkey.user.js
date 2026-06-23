@@ -15,7 +15,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-23T05:30:53.601Z
+// 生成时间：2026-06-23T06:15:31.599Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -173,6 +173,16 @@
     return map[type] || '条目';
   }
 
+  // 收藏状态用词随条目类型变化：书=读 / 音乐=听 / 游戏=玩 / 动画·三次元=看
+  function collectionLabels(type) {
+    switch (type) {
+      case 1: return { wish: '想读', doing: '在读', done: '读过' };
+      case 3: return { wish: '想听', doing: '在听', done: '听过' };
+      case 4: return { wish: '想玩', doing: '在玩', done: '玩过' };
+      default: return { wish: '想看', doing: '在看', done: '看过' };
+    }
+  }
+
   function fmtCount(n) {
     n = Number(n) || 0;
     if (n >= 10000) return (n / 10000).toFixed(1) + 'w';
@@ -293,6 +303,19 @@
   function clipRoundRect(ctx, x, y, w, h, r) {
     roundRectPath(ctx, x, y, w, h, r);
     ctx.clip();
+  }
+
+  // 等比裁剪绘制（object-fit: cover）：居中裁掉多余部分，避免方形专辑封面被拉伸
+  function drawImageCover(ctx, img, dx, dy, dw, dh) {
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (!iw || !ih) { ctx.drawImage(img, dx, dy, dw, dh); return; }
+    const scale = Math.max(dw / iw, dh / ih);
+    const sw = dw / scale;
+    const sh = dh / scale;
+    const sx = (iw - sw) / 2;
+    const sy = (ih - sh) / 2;
+    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
   }
 
   // 竖向柔和渐变分割线（两端淡出），对应设计稿里的 soft-divider
@@ -418,6 +441,7 @@
 
     return {
       id: raw.id,
+      type: raw.type,
       posterUrl,
       titleZh,
       titleJa,
@@ -451,7 +475,7 @@
       ctx.fillRect(0, 0, LAYOUT.w, LAYOUT.h);
       const blur = 40;
       ctx.filter = `blur(${blur}px) brightness(0.42)`;
-      ctx.drawImage(posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
+      drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
       ctx.filter = 'none';
     } else {
       const grd = ctx.createLinearGradient(0, 0, LAYOUT.w, LAYOUT.h);
@@ -483,9 +507,9 @@
       ctx.fillStyle = 'rgba(0,0,0,0)';
       ctx.fill();
       ctx.shadowColor = 'transparent';
-      // 再绘制图片并裁剪为圆角
+      // 再绘制图片并裁剪为圆角（cover 等比裁剪，方形专辑封面不会被拉伸）
       clipRoundRect(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
-      ctx.drawImage(posterImg, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h);
+      drawImageCover(ctx, posterImg, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h);
       ctx.restore();
     } else {
       ctx.save();
@@ -533,10 +557,11 @@
     }
 
     // 6. 收藏数度量（先算，用来约束 Meta 的最大宽度并让分割线居中）
+    const collLabels = collectionLabels(data.type);
     const collItems = [
-      { num: fmtCount(data.collWish), label: '想看', color: LAYOUT.colors.textMain },
-      { num: fmtCount(data.collDoing), label: '在看', color: LAYOUT.colors.accent },
-      { num: fmtCount(data.collDone), label: '看过', color: LAYOUT.colors.textMain },
+      { num: fmtCount(data.collWish), label: collLabels.wish, color: LAYOUT.colors.textMain },
+      { num: fmtCount(data.collDoing), label: collLabels.doing, color: LAYOUT.colors.accent },
+      { num: fmtCount(data.collDone), label: collLabels.done, color: LAYOUT.colors.textMain },
     ];
     // 比内容边缘再内收一点：右对齐 CJK 文字侧边间距小，贴着边缘观感发紧
     const contentRight = LAYOUT.w - 50;
@@ -893,6 +918,7 @@
     normalizeValue,
     pickStaff,
     mediaLabel,
+    collectionLabels,
     fmtCount,
     renderStars,
     processSummary,
