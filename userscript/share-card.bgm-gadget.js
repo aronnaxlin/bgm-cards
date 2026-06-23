@@ -11,7 +11,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-23T13:55:16.255Z
+// 生成时间：2026-06-23T13:58:55.379Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -188,14 +188,54 @@
     return String(n);
   }
 
-  function renderStars(score) {
-    // 满分 10 → 5 星，按 score/2 就近取整到 0.5 颗（6.6 ≈ 3.5 星）
+  // 用路径绘制五角星，避免依赖 ⯪ 等 iOS 不支持的 Unicode 字符
+  function drawStars(ctx, score, x, cy, size, color) {
     const s5 = Math.max(0, Math.min(5, (Number(score) || 0) / 2));
     const half = Math.round(s5 * 2) / 2;
     const full = Math.floor(half);
     const hasHalf = half - full === 0.5;
     const empty = 5 - full - (hasHalf ? 1 : 0);
-    return '★'.repeat(full) + (hasHalf ? '⯪' : '') + '☆'.repeat(empty);
+    const R = size / 2;
+    const r = R * 0.4;
+    const gap = size * 0.25;
+    const step = size + gap;
+
+    function starPath(sx) {
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = (i * Math.PI / 5) - Math.PI / 2;
+        const rad = i % 2 === 0 ? R : r;
+        ctx.lineTo(sx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+      }
+      ctx.closePath();
+    }
+
+    ctx.fillStyle = color;
+    let ox = x + R;
+    for (let i = 0; i < full; i++, ox += step) { starPath(ox); ctx.fill(); }
+
+    if (hasHalf) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(ox - R - 1, cy - R - 1, R + 1, R * 2 + 2); ctx.clip();
+      starPath(ox); ctx.fill();
+      ctx.restore();
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.beginPath(); ctx.rect(ox, cy - R - 1, R + 2, R * 2 + 2); ctx.clip();
+      starPath(ox); ctx.fill();
+      ctx.restore();
+      ox += step;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    for (let i = 0; i < empty; i++, ox += step) { starPath(ox); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function starsWidth(size) {
+    // 5 颗星 × size + 4 个间隔 × (size*0.25) = size*6
+    return size * 6;
   }
 
   function processSummary(raw) {
@@ -730,9 +770,7 @@
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       if (kind === 'stars') {
-        ctx.font = `${LAYOUT.rating.starsSize}px ${FONT_STACK.mono}`;
-        ctx.fillStyle = LAYOUT.colors.accent;
-        ctx.fillText(renderStars(data.score), metaX, cy);
+        drawStars(ctx, data.score, metaX, cy, LAYOUT.rating.starsSize, LAYOUT.colors.accent);
       } else if (kind === 'count') {
         ctx.font = `${LAYOUT.rating.countSize}px ${FONT_STACK.cn}`;
         ctx.fillStyle = LAYOUT.colors.textSub;
@@ -750,8 +788,7 @@
 
     // 评分区实际宽度 → 动态决定分割线与标签起点（等宽布局下星星/人数比固定坐标更宽，
     // 固定 tags.x 会和星星、人数重叠；这里按真实内容宽度排版，对齐设计稿的 flex 行为）
-    ctx.font = `${LAYOUT.rating.starsSize}px ${FONT_STACK.mono}`;
-    const starsW = ctx.measureText(renderStars(data.score)).width;
+    const starsW = starsWidth(LAYOUT.rating.starsSize);
     ctx.font = `${LAYOUT.rating.countSize}px ${FONT_STACK.cn}`;
     const countW = ctx.measureText(`${fmtCount(data.scoreCount)} 人评分`).width;
     let rankW = 0;
