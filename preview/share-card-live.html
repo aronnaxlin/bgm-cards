@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bangumi 条目分享卡片 - 数据驱动预览</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800;900&family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: #0a0a0c;
-    font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -42,7 +42,6 @@
     border: 1px solid rgba(255,255,255,0.15);
     background: rgba(255,255,255,0.06);
     color: #f5f5f7;
-    font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
     outline: none;
   }
@@ -146,7 +145,7 @@
   }
 
   .title-main {
-    font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
     font-size: 22px;
     font-weight: 800;
     line-height: 1.25;
@@ -161,13 +160,14 @@
   .title-main.long { font-size: 18px; }
 
   .title-sub {
-    font-family: 'Noto Sans JP', sans-serif;
+    font-family: 'Noto Sans', 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
     font-size: 13px;
+    line-height: 1.35;
     color: #a0a0b0;
     margin: 0;
     font-weight: 400;
     display: -webkit-box;
-    -webkit-line-clamp: 1;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -182,10 +182,17 @@
   .meta-col {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
-    font-size: 10px;
+    gap: 0;
+    font-size: 11px;
     color: #a0a0b0;
+    min-width: 0;
+    max-width: 150px;
+  }
+  .meta-col > div {
+    line-height: 21px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .meta-col strong {
     color: #f5f5f7;
@@ -204,6 +211,7 @@
     flex-direction: column;
     gap: 7px;
     flex-shrink: 0;
+    margin-right: 10px;
   }
   .coll-item {
     display: flex;
@@ -212,18 +220,17 @@
     gap: 6px;
   }
   .coll-num {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     line-height: 1;
-    min-width: 38px;
+    min-width: 40px;
     text-align: right;
   }
   .coll-num.doing { color: #F09199; }
   .coll-num.other { color: #f5f5f7; }
   .coll-label {
-    font-family: 'Noto Sans SC', 'PingFang SC', sans-serif;
-    font-size: 9px;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
+    font-size: 10px;
     color: #a0a0b0;
     letter-spacing: 0.08em;
   }
@@ -231,7 +238,7 @@
   .rating-panel {
     display: flex;
     align-items: stretch;
-    margin-top: 22px;
+    margin-top: 26px;
     padding: 16px 18px;
     border-radius: 24px;
     corner-shape: superellipse(2.2);
@@ -247,12 +254,15 @@
     padding-right: 18px;
   }
   .rating-score {
-    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, 'Liberation Mono', 'Courier New', monospace;
     font-size: 38px;
     font-weight: 800;
     color: #F09199;
     line-height: 1;
+    display: flex;
+    align-items: baseline;
   }
+  .rating-score .dot { margin: 0 -0.09em; }
   .rating-meta { display: flex; flex-direction: column; gap: 5px; }
   .rating-stars {
     color: #F09199;
@@ -261,7 +271,6 @@
   }
   .rating-count,
   .rating-rank {
-    font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
     color: #a0a0b0;
   }
@@ -278,9 +287,11 @@
     display: flex;
     flex-wrap: wrap;
     gap: 7px;
+    max-height: calc((11px + 8px + 2px) * 2 + 7px);
+    overflow: hidden;
   }
   .tag-pill {
-    font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', sans-serif;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
     font-size: 11px;
     font-weight: 500;
     padding: 4px 11px;
@@ -289,20 +300,22 @@
     color: rgba(245,245,247,0.82);
     border: 1px solid rgba(240,145,153,0.22);
     white-space: nowrap;
+    line-height: 1;
   }
 
   .summary {
-    font-family: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', sans-serif;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
     font-size: 12px;
     line-height: 1.75;
     color: rgba(245,245,247,0.70);
-    margin: 24px 0 28px;
+    margin: 26px 0 28px;
     text-align: left;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 6;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    min-height: calc(12px * 1.75 * 3);
+    min-height: 0;
+    white-space: pre-line;
   }
 
   .card-footer {
@@ -330,12 +343,12 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     border: 1px solid rgba(0,0,0,0.06);
     flex-shrink: 0;
-    background-size: calc(100% - 10px);
+    background-size: calc(100% - 22px);
     background-repeat: no-repeat;
     background-position: center;
   }
   .qr-tip {
-    font-family: 'Noto Sans JP', 'Noto Sans SC', sans-serif;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Source Han Sans SC', sans-serif;
     font-size: 12px;
     color: #555;
     line-height: 1.45;
@@ -349,25 +362,24 @@
   }
   .footer-right {
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 5px;
+    align-items: center;
   }
   .brand {
-    font-family: 'Noto Sans JP', sans-serif;
-    font-size: 20px;
-    font-weight: 900;
-    color: #1a1a1a;
-    letter-spacing: -0.04em;
-    line-height: 1;
+    width: 140px;
+    height: 32px;
+    background-image: url('https://bangumi.tv/img/logo_riff.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: right center;
+    flex-shrink: 0;
   }
-  .brand span { color: #F09199; }
-  .id-watermark {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    color: #999;
-    letter-spacing: 0.08em;
+  .brand span { display: none; }
+  .brand img {
+    display: block;
+    height: 32px;
+    width: auto;
   }
+  .id-watermark { display: none; }
 
   .notice {
     margin-top: 18px;
@@ -418,7 +430,7 @@
 
       <div class="rating-panel">
         <div class="rating-left">
-          <div class="rating-score" id="score">6.6</div>
+          <div class="rating-score" id="score"><span>6</span><span class="dot">.</span><span>6</span></div>
           <div class="rating-meta">
             <div class="rating-stars" id="stars">★★★☆☆</div>
             <div class="rating-count"><span id="scoreCount">138</span> 人评分</div>
@@ -446,8 +458,7 @@
         <div class="qr-tip"><strong>扫码查看条目</strong>bgm.tv/subject/<span id="footerSubjectId">297313</span></div>
       </div>
       <div class="footer-right">
-        <div class="brand">bangumi<span>.</span>tv</div>
-        <div class="id-watermark" id="footerId">#297313</div>
+        <div class="brand" role="img" aria-label="bangumi.tv"></div>
       </div>
     </div>
   </div>
@@ -484,7 +495,6 @@
     summary: document.getElementById('summary'),
     qr: document.getElementById('qr'),
     footerSubjectId: document.getElementById('footerSubjectId'),
-    footerId: document.getElementById('footerId'),
   };
 
   function fmt(n) {
@@ -494,8 +504,13 @@
   }
 
   function renderStars(score) {
-    const rounded = Math.max(0, Math.min(5, Math.round(Number(score) || 0)));
-    return '★'.repeat(rounded) + '☆'.repeat(5 - rounded);
+    // 满分 10 → 5 星，按 score/2 就近取整到 0.5 颗（6.6 ≈ 3.5 星）
+    const s5 = Math.max(0, Math.min(5, (Number(score) || 0) / 2));
+    const half = Math.round(s5 * 2) / 2;
+    const full = Math.floor(half);
+    const hasHalf = half - full === 0.5;
+    const empty = 5 - full - (hasHalf ? 1 : 0);
+    return '★'.repeat(full) + (hasHalf ? '⯪' : '') + '☆'.repeat(empty);
   }
 
   function normalizeValue(v) {
@@ -512,24 +527,25 @@
 
   function pickStaff(infobox, type) {
     const priorities = {
-      1: ['作者', '作画', '剧本', '系列构成', '原作', '出版社'],
-      2: ['导演', '动画制作', '原作', '系列构成', '脚本'],
-      4: ['开发', '发行', '原作'],
+      1: ['作者', '作画', '原作', '出版社', '插图'],
+      2: ['导演', '原作', '动画制作', '人物设定', '音乐'],
+      3: ['艺术家', '作曲', '编曲', '作词', '发行'],
+      4: ['开发', '发行', '游戏类型', '平台'],
+      6: ['导演', '主演', '编剧', '制作'],
     };
     const order = priorities[type] || ['导演', '原作', '作者'];
-    const map = new Map();
+    const seen = new Set();
+    const picks = [];
     for (const item of (infobox || [])) {
       if (!item || !item.key) continue;
-      if (order.includes(item.key) && !map.has(item.key)) {
-        const val = normalizeValue(item.value);
-        if (val) map.set(item.key, val);
-      }
+      if (!order.includes(item.key) || seen.has(item.key)) continue;
+      const val = normalizeValue(item.value);
+      if (!val) continue;
+      seen.add(item.key);
+      picks.push({ key: item.key, value: val });
+      if (picks.length >= 2) break;
     }
-    const picks = [];
-    for (const key of order) {
-      if (map.has(key)) picks.push({ key, value: map.get(key) });
-    }
-    return picks.slice(0, 2);
+    return picks;
   }
 
   function mediaLabel(type, platform) {
@@ -575,7 +591,14 @@
       const rank = data.rating?.rank;
 
       const tags = (data.tags || []).slice(0, 6).map(t => t.name);
-      const summary = (data.summary || '').replace(/\r\n/g, '\n').replace(/\n+/g, ' ').trim();
+      const summary = (data.summary || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\n{2,}/g, '\n')
+        .split('\n')
+        .map(s => s.replace(/^\s+/, '').replace(/\s+$/, ''))
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 360) + ((data.summary || '').length > 360 ? '…' : '');
 
       const collWish = data.collection?.wish ?? 0;
       const collDoing = data.collection?.doing ?? 0;
@@ -606,7 +629,9 @@
       els.collDoing.textContent = fmt(collDoing);
       els.collDone.textContent = fmt(collDone);
 
-      els.score.textContent = score ? score.toFixed(1) : '0.0';
+      const scoreStr = score ? score.toFixed(1) : '0.0';
+      const [scoreInt, scoreDec] = scoreStr.split('.');
+      els.score.innerHTML = `<span>${scoreInt}</span><span class="dot">.</span><span>${scoreDec}</span>`;
       els.stars.textContent = renderStars(score);
       els.scoreCount.textContent = fmt(scoreCount);
 
@@ -624,7 +649,6 @@
       els.summary.textContent = summary;
       els.qr.style.backgroundImage = `url('${qrUrl}')`;
       els.footerSubjectId.textContent = id;
-      els.footerId.textContent = `#${id}`;
 
       if (history.replaceState) {
         history.replaceState(null, '', `?id=${encodeURIComponent(id)}`);

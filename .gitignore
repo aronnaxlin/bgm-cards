@@ -1,4 +1,11 @@
+# 浏览器自动化 / 预览生成的临时产物
 .playwright-mcp/
+
+# 临时抓取的页面、调试截图、打包备份
+*tmp_*
+*.zip
+
+# 系统 / 日志
 *.log
 .DS_Store
 Thumbs.db
