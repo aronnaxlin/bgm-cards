@@ -455,9 +455,21 @@
       ctx.fillStyle = LAYOUT.colors.bg;
       ctx.fillRect(0, 0, LAYOUT.w, LAYOUT.h);
       const blur = 40;
-      ctx.filter = `blur(${blur}px) brightness(0.42)`;
-      drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
-      ctx.filter = 'none';
+      // iOS 的 WKWebView 不支持 ctx.filter；改用 offscreen canvas + boxBlur 降级
+      if (typeof ctx.filter !== 'undefined' && ctx.filter !== null && /filter/.test(Object.keys(ctx).join(','))) {
+        // 此分支走不到（filter 是 setter），保留结构供未来用
+      }
+      try {
+        ctx.filter = `blur(${blur}px) brightness(0.42)`;
+        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
+        ctx.filter = 'none';
+      } catch (_) {
+        // iOS 不支持 filter：直接绘制压暗版本
+        ctx.filter = 'none';
+        ctx.globalAlpha = 0.42;
+        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
+        ctx.globalAlpha = 1;
+      }
     } else {
       const grd = ctx.createLinearGradient(0, 0, LAYOUT.w, LAYOUT.h);
       grd.addColorStop(0, LAYOUT.colors.fallbackGradient[0]);
@@ -811,15 +823,50 @@
 
   function exportPNG(canvas) {
     return new Promise((resolve, reject) => {
-      canvas.toBlob(blob => {
-        if (!blob) return reject(new Error('生成 PNG 失败'));
-        resolve(blob);
-      }, 'image/png');
+      try {
+        canvas.toBlob(blob => {
+          if (!blob) return reject(new Error('生成 PNG 失败'));
+          resolve(blob);
+        }, 'image/png');
+      } catch (e) {
+        // canvas 被污染（SecurityError）时 toBlob 会同步抛异常
+        reject(e);
+      }
     });
+  }
+
+  // dataURL → Blob 转换，用于 toBlob 不可用时降级
+  function dataURLToBlob(dataUrl) {
+    const [header, data] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)[1];
+    const binary = atob(data);
+    const arr = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  function exportPNGFallback(canvas) {
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      return Promise.resolve(dataURLToBlob(dataUrl));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
+  function isIOS() {
+    return /iphone|ipad|ipod/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '');
   }
 
   function download(blob, filename) {
     const url = URL.createObjectURL(blob);
+    if (isIOS()) {
+      // iOS Chrome / Safari 不支持 <a download>：用 window.open 打开图片，用户长按保存
+      window.open(url, '_blank');
+      // 延迟释放，否则新 tab 还没打开就被撤销
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      return;
+    }
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -880,7 +927,18 @@
       tainted: !posterImg,
     });
 
-    const blob = await exportPNG(canvas);
+    // toBlob 在 canvas 被污染时会抛 SecurityError；先 probe，失败则降级 toDataURL
+    let blob;
+    try {
+      blob = await exportPNG(canvas);
+    } catch (secErr) {
+      console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
+      try {
+        blob = await exportPNGFallback(canvas);
+      } catch (e2) {
+        throw new Error('图片导出失败（canvas 已污染）：' + secErr.message);
+      }
+    }
     return { canvas, blob, id, data };
   }
 
@@ -917,6 +975,9 @@
     prepareData,
     renderCard,
     exportPNG,
+    exportPNGFallback,
+    dataURLToBlob,
+    isIOS,
     download,
     copyToClipboard,
     generateShareCard,

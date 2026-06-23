@@ -15,7 +15,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-23T06:15:31.599Z
+// 生成时间：2026-06-23T13:34:49.623Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -474,9 +474,21 @@
       ctx.fillStyle = LAYOUT.colors.bg;
       ctx.fillRect(0, 0, LAYOUT.w, LAYOUT.h);
       const blur = 40;
-      ctx.filter = `blur(${blur}px) brightness(0.42)`;
-      drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
-      ctx.filter = 'none';
+      // iOS 的 WKWebView 不支持 ctx.filter；改用 offscreen canvas + boxBlur 降级
+      if (typeof ctx.filter !== 'undefined' && ctx.filter !== null && /filter/.test(Object.keys(ctx).join(','))) {
+        // 此分支走不到（filter 是 setter），保留结构供未来用
+      }
+      try {
+        ctx.filter = `blur(${blur}px) brightness(0.42)`;
+        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
+        ctx.filter = 'none';
+      } catch (_) {
+        // iOS 不支持 filter：直接绘制压暗版本
+        ctx.filter = 'none';
+        ctx.globalAlpha = 0.42;
+        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, LAYOUT.h + blur * 2);
+        ctx.globalAlpha = 1;
+      }
     } else {
       const grd = ctx.createLinearGradient(0, 0, LAYOUT.w, LAYOUT.h);
       grd.addColorStop(0, LAYOUT.colors.fallbackGradient[0]);
@@ -830,15 +842,50 @@
 
   function exportPNG(canvas) {
     return new Promise((resolve, reject) => {
-      canvas.toBlob(blob => {
-        if (!blob) return reject(new Error('生成 PNG 失败'));
-        resolve(blob);
-      }, 'image/png');
+      try {
+        canvas.toBlob(blob => {
+          if (!blob) return reject(new Error('生成 PNG 失败'));
+          resolve(blob);
+        }, 'image/png');
+      } catch (e) {
+        // canvas 被污染（SecurityError）时 toBlob 会同步抛异常
+        reject(e);
+      }
     });
+  }
+
+  // dataURL → Blob 转换，用于 toBlob 不可用时降级
+  function dataURLToBlob(dataUrl) {
+    const [header, data] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)[1];
+    const binary = atob(data);
+    const arr = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  function exportPNGFallback(canvas) {
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      return Promise.resolve(dataURLToBlob(dataUrl));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
+  function isIOS() {
+    return /iphone|ipad|ipod/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '');
   }
 
   function download(blob, filename) {
     const url = URL.createObjectURL(blob);
+    if (isIOS()) {
+      // iOS Chrome / Safari 不支持 <a download>：用 window.open 打开图片，用户长按保存
+      window.open(url, '_blank');
+      // 延迟释放，否则新 tab 还没打开就被撤销
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      return;
+    }
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -899,7 +946,18 @@
       tainted: !posterImg,
     });
 
-    const blob = await exportPNG(canvas);
+    // toBlob 在 canvas 被污染时会抛 SecurityError；先 probe，失败则降级 toDataURL
+    let blob;
+    try {
+      blob = await exportPNG(canvas);
+    } catch (secErr) {
+      console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
+      try {
+        blob = await exportPNGFallback(canvas);
+      } catch (e2) {
+        throw new Error('图片导出失败（canvas 已污染）：' + secErr.message);
+      }
+    }
     return { canvas, blob, id, data };
   }
 
@@ -936,6 +994,9 @@
     prepareData,
     renderCard,
     exportPNG,
+    exportPNGFallback,
+    dataURLToBlob,
+    isIOS,
     download,
     copyToClipboard,
     generateShareCard,
@@ -1141,44 +1202,60 @@
     const actions = document.createElement('div');
     actions.className = `${ns}-actions`;
 
+    const ios = core.isIOS();
+
     const downloadBtn = document.createElement('button');
     downloadBtn.className = `${ns}-btn ${ns}-btn-primary`;
-    downloadBtn.textContent = '下载 PNG';
+    downloadBtn.textContent = ios ? '打开图片' : '下载 PNG';
+    if (ios) downloadBtn.title = '在新标签打开后长按图片保存';
 
     const copyBtn = document.createElement('button');
     copyBtn.className = `${ns}-btn ${ns}-btn-secondary`;
-    copyBtn.textContent = '复制图片';
+    copyBtn.textContent = ios ? '长按预览图保存' : '复制图片';
+    if (ios) {
+      copyBtn.title = '长按上方预览图片即可保存';
+      copyBtn.style.opacity = '0.6';
+      copyBtn.style.cursor = 'default';
+    }
 
     const closeBtn = document.createElement('button');
     closeBtn.className = `${ns}-close`;
     closeBtn.textContent = '×';
 
     actions.appendChild(downloadBtn);
-    actions.appendChild(copyBtn);
+    if (!ios) actions.appendChild(copyBtn);
 
     modal.appendChild(closeBtn);
     modal.appendChild(preview);
+    if (ios) {
+      const hint = document.createElement('p');
+      hint.style.cssText = 'margin:0;font-size:11px;color:#a0a0b0;text-align:center;';
+      hint.textContent = 'iOS：长按上方预览图片 → 存储到相册';
+      modal.appendChild(hint);
+    }
     modal.appendChild(actions);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
     let blob = null;
-    core.exportPNG(canvas).then(b => { blob = b; });
+    core.exportPNG(canvas).catch(() => core.exportPNGFallback(canvas)).then(b => { blob = b; });
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
       core.download(blob, `bgm-share-card-${core.parseSubjectId()}.png`);
     });
 
-    copyBtn.addEventListener('click', async () => {
-      if (!blob) return toast('图片尚未生成完毕');
-      try {
-        await core.copyToClipboard(blob);
-        toast('已复制到剪贴板');
-      } catch (e) {
-        toast('复制失败，请使用下载：' + e.message);
-      }
-    });
+    if (!ios) {
+      copyBtn.addEventListener('click', async () => {
+        if (!blob) return toast('图片尚未生成完毕');
+        try {
+          await core.copyToClipboard(blob);
+          toast('已复制到剪贴板');
+        } catch (e) {
+          toast('复制失败，请使用下载：' + e.message);
+        }
+      });
+    }
 
     const close = () => overlay.remove();
     closeBtn.addEventListener('click', close);

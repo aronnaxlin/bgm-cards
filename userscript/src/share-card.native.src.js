@@ -185,9 +185,11 @@ function createUI(core) {
     const actions = document.createElement('div');
     actions.className = `${ns}-actions`;
 
+    const ios = core.isIOS();
+
     const downloadBtn = document.createElement('button');
     downloadBtn.className = `${ns}-btn ${ns}-btn-primary`;
-    downloadBtn.textContent = '下载 PNG';
+    downloadBtn.textContent = ios ? '打开图片' : '下载 PNG';
 
     const copyBtn = document.createElement('button');
     copyBtn.className = `${ns}-btn ${ns}-btn-secondary`;
@@ -198,31 +200,39 @@ function createUI(core) {
     closeBtn.textContent = '×';
 
     actions.appendChild(downloadBtn);
-    actions.appendChild(copyBtn);
+    if (!ios) actions.appendChild(copyBtn);
 
     modal.appendChild(closeBtn);
     modal.appendChild(preview);
+    if (ios) {
+      const hint = document.createElement('p');
+      hint.style.cssText = 'margin:0;font-size:11px;color:#a0a0b0;text-align:center;';
+      hint.textContent = 'iOS：长按上方预览图片 → 存储到相册';
+      modal.appendChild(hint);
+    }
     modal.appendChild(actions);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
     let blob = null;
-    core.exportPNG(canvas).then(b => { blob = b; });
+    core.exportPNG(canvas).catch(() => core.exportPNGFallback(canvas)).then(b => { blob = b; });
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
       core.download(blob, `bgm-share-card-${core.parseSubjectId()}.png`);
     });
 
-    copyBtn.addEventListener('click', async () => {
-      if (!blob) return toast('图片尚未生成完毕');
-      try {
-        await core.copyToClipboard(blob);
-        toast('已复制到剪贴板');
-      } catch (e) {
-        toast('复制失败，请使用下载：' + e.message);
-      }
-    });
+    if (!ios) {
+      copyBtn.addEventListener('click', async () => {
+        if (!blob) return toast('图片尚未生成完毕');
+        try {
+          await core.copyToClipboard(blob);
+          toast('已复制到剪贴板');
+        } catch (e) {
+          toast('复制失败，请使用下载：' + e.message);
+        }
+      });
+    }
 
     const close = () => overlay.remove();
     closeBtn.addEventListener('click', close);
