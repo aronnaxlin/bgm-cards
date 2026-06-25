@@ -18,7 +18,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-25T15:13:12.753Z
+// 生成时间：2026-06-25T15:40:43.865Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -1160,11 +1160,7 @@
     generateShareCard,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = BgmShareCardCore;
-  } else {
-    global.BgmShareCardCore = BgmShareCardCore;
-  }
+  global.BgmShareCardCore = BgmShareCardCore;
 })(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this));
 
 

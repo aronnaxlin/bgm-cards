@@ -1138,9 +1138,5 @@
     generateShareCard,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = BgmShareCardCore;
-  } else {
-    global.BgmShareCardCore = BgmShareCardCore;
-  }
+  global.BgmShareCardCore = BgmShareCardCore;
 })(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this));
