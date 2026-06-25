@@ -11,7 +11,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-23T14:06:06.018Z
+// 生成时间：2026-06-25T15:13:12.753Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -267,18 +267,89 @@
   }
 
   // ========================================================================
-  // 网络与图片
+  // 页面抓取（替代 API 调用，天然绕过登录限制）
   // ========================================================================
 
-  async function fetchSubject(id) {
-    const url = `${API_BASE}/v0/subjects/${id}`;
-    // User-Agent 是 Forbidden header，iOS WKWebView 设置会抛 TypeError，移除
-    const res = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
-    });
-    if (!res.ok) throw new Error(`条目数据加载失败：HTTP ${res.status}`);
-    return res.json();
+  function scrapeSubjectPage() {
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+    const numFrom = (el) => {
+      const m = el?.textContent?.match(/(\d[\d,]*)/);
+      return m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
+    };
+
+    if (!$('#bangumiInfo')) throw new Error('未找到条目信息，请确认已在条目页');
+
+    // 条目 ID
+    const id = parseSubjectId();
+
+    // 条目类型（从标签区链接前缀推断）
+    // .subject_tag_section 包含所有标签（含 #user_tags 里 display:none 的溢出部分）
+    let type = 0;
+    const firstTagHref = $('.subject_tag_section a[href*="/tag/"]')?.getAttribute('href') || '';
+    const typeMap = { '/anime/': 2, '/book/': 1, '/music/': 3, '/game/': 4, '/real/': 6 };
+    for (const [prefix, t] of Object.entries(typeMap)) {
+      if (firstTagHref.startsWith(prefix)) { type = t; break; }
+    }
+
+    // 标题
+    const titleEl = $('h1.nameSingle a');
+    const name = titleEl?.textContent?.trim() || '';
+    const name_cn = titleEl?.getAttribute('title') || '';
+
+    // 媒体形式（TV / OVA / Movie…）
+    const platform = $('h1.nameSingle small.grey')?.textContent?.trim() || '';
+
+    // 封面（升级到 800px，保留原始 400px 作备份）
+    const rawCover = $('a.thickbox.cover img')?.getAttribute('src') || '';
+    const cover = rawCover
+      ? (rawCover.startsWith('//') ? 'https:' + rawCover : rawCover)
+      : '';
+    const cover800 = cover.replace('/r/400/', '/r/800/');
+    const images = cover ? { large: cover800, medium: cover } : null;
+
+    // infobox → API 兼容格式 [{ key, value }]
+    const infobox = $$('#infobox li').map(li => {
+      const tip = li.querySelector('span.tip');
+      const key = tip?.textContent?.replace(':', '').trim() || '';
+      const value = li.textContent.replace(tip?.textContent || '', '').trim();
+      return key ? { key, value } : null;
+    }).filter(Boolean);
+
+    const infoMap = Object.fromEntries(infobox.map(i => [i.key, i.value]));
+    const date = infoMap['放送开始'] || infoMap['发售日'] || infoMap['开始'] || infoMap['出版年份'] || '';
+    const eps = parseInt(infoMap['话数'] || infoMap['集数'] || infoMap['册数'] || '0', 10) || 0;
+
+    // 评分
+    const score = parseFloat($('span[property="v:average"]')?.textContent) || 0;
+    const total = parseInt($('[property="v:votes"]')?.textContent, 10) || 0;
+    const rankText = $('.global_score small.alarm')?.textContent?.trim() || '';
+    const rank = parseInt(rankText.replace('#', ''), 10) || undefined;
+
+    // 标签（.subject_tag_section 下所有 /tag/ 链接，含 #user_tags 隐藏溢出部分）
+    const tags = $$('.subject_tag_section a[href*="/tag/"]').map(a => ({
+      name: a.querySelector('span')?.textContent?.trim() || '',
+      count: parseInt(a.querySelector('small')?.textContent, 10) || 0,
+    })).filter(t => t.name);
+
+    // 简介
+    const summary = $('#subject_summary')?.textContent?.trim() || '';
+
+    // 收藏统计
+    const collection = {
+      wish:    numFrom($('a[href*="/wishes"]')),
+      doing:   numFrom($('a[href*="/doings"]')),
+      collect: numFrom($('a[href*="/collections"]')),
+      on_hold: numFrom($('a[href*="/on_hold"]')),
+      dropped: numFrom($('a[href*="/dropped"]')),
+    };
+
+    return { id, name, name_cn, type, platform, date, eps, images, infobox, tags, summary, rating: { score, total, rank }, collection };
   }
+
+  // ========================================================================
+  // 网络与图片
+  // ========================================================================
 
   function loadImageRaw(src, useCORS) {
     return new Promise((resolve, reject) => {
@@ -1011,11 +1082,7 @@
       await document.fonts.ready;
     }
 
-    const data = await retry(() => fetchSubject(id), {
-      retries: 3,
-      delay: 800,
-      onRetry: (err, attempt) => console.warn(`[share-card] 重试 ${attempt}/3`, err.message),
-    });
+    const data = scrapeSubjectPage();
 
     const [posterImg, qrImg, logoImg] = await Promise.all([
       data.images ? loadImage(pickPosterUrl(data.images), { crossOrigin: 'anonymous' }).catch(err => {
@@ -1065,7 +1132,7 @@
     fmtCount,
     processSummary,
     retry,
-    fetchSubject,
+    scrapeSubjectPage,
     loadImage,
     makeQRImage,
     loadLogoImage,
