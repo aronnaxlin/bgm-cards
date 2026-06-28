@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-06-25T15:40:43.862Z
+// 生成时间：2026-06-28T16:59:23.853Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -110,12 +110,44 @@
     return `${location.protocol}//${location.hostname}/subject/${id}`;
   }
 
+  function parseCharacterId() {
+    if (typeof location === 'undefined') return null;
+    if (/^\/m\//.test(location.pathname)) return null;
+    const m = location.pathname.match(/^\/character\/(\d+)(?:\/|$)/);
+    return m ? m[1] : null;
+  }
+
+  function characterPageUrl(id) {
+    if (typeof location === 'undefined') return `https://bgm.tv/character/${id}`;
+    return `${location.protocol}//${location.hostname}/character/${id}`;
+  }
+
+  function isCharacterPage() {
+    if (typeof location === 'undefined') return false;
+    return /^\/character\//.test(location.pathname);
+  }
+
   function pickPosterUrl(images) {
     if (!images) return null;
     const preferred = images.medium || images.common || images.large || images.grid || images.small;
     if (!preferred) return null;
     if (/\/r\/\d+\/pic\/cover\//.test(preferred)) return preferred;
     return preferred.replace(/\/pic\/cover\//, '/r/800/pic/cover/');
+  }
+
+  function formatCrtUrl(url, size = 800) {
+    if (!url) return '';
+    const cleanUrl = url.startsWith('//') ? 'https:' + url : url;
+    let resolved = cleanUrl;
+    if (/\/pic\/crt\/[gms]\//.test(resolved)) {
+      resolved = resolved.replace(/\/pic\/crt\/[gms]\//, '/pic/crt/l/');
+    }
+    if (/\/r\/\d+\/pic\/crt\/l\//.test(resolved)) {
+      resolved = resolved.replace(/\/r\/\d+\/pic\/crt\/l\//, `/r/${size}/pic/crt/l/`);
+    } else {
+      resolved = resolved.replace(/\/pic\/crt\/l\//, `/r/${size}/pic/crt/l/`);
+    }
+    return resolved;
   }
 
   function normalizeValue(v) {
@@ -335,6 +367,102 @@
     return { id, name, name_cn, type, platform, date, eps, images, infobox, tags, summary, rating: { score, total, rank }, collection };
   }
 
+  function scrapeCharacterPage() {
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+    if (!document.querySelector('#infobox') && !document.querySelector('.infobox')) {
+      throw new Error('未找到角色信息，请确认已在角色页');
+    }
+
+    const id = parseCharacterId();
+
+    const titleEl = $('h1.nameSingle a');
+    const name = titleEl?.textContent?.trim() || '';
+    const name_cn = titleEl?.getAttribute('title') || $('h1.nameSingle small.grey')?.textContent?.trim() || '';
+
+    const coverEl = $('a.thickbox.cover img') || $('img.cover') || $('.infobox img');
+    let rawCover = coverEl?.getAttribute('src') || '';
+    if (!rawCover && coverEl) {
+      rawCover = coverEl.src || '';
+    }
+    const cover = rawCover
+      ? (rawCover.startsWith('//') ? 'https:' + rawCover : rawCover)
+      : '';
+    const largeCover = formatCrtUrl(cover, 800);
+    const images = cover ? { large: largeCover, medium: cover } : null;
+
+    const infobox = $$('#infobox li').map(li => {
+      const tip = li.querySelector('span.tip');
+      const key = tip?.textContent?.replace(':', '').trim() || '';
+      const value = li.textContent.replace(tip?.textContent || '', '').trim();
+      return key ? { key, value } : null;
+    }).filter(Boolean);
+
+    const summaryEl = $('#char_contents') || $('.detail');
+    const summary = summaryEl?.textContent?.trim() || '';
+
+    const cvs = [];
+    const works = [];
+    const castList = document.querySelector('ul.browserList.castTypeFilterList');
+    if (castList) {
+      const lis = Array.from(castList.querySelectorAll(':scope > li'));
+      lis.forEach(li => {
+        const subjectA = li.querySelector('.innerLeftItem h3 a');
+        const subjectName = subjectA ? subjectA.textContent.trim() : '';
+        
+        const jobBadge = li.querySelector('.badge_job_tip');
+        const jobName = jobBadge ? jobBadge.textContent.trim() : '';
+
+        const cvLis = Array.from(li.querySelectorAll('ul.innerRightList li.badge_actor'));
+        const workCvs = [];
+        cvLis.forEach(cvLi => {
+          const cvA = cvLi.querySelector('h3 a');
+          const cvName = cvA ? cvA.textContent.trim() : '';
+          const cvHref = cvA ? cvA.getAttribute('href') : '';
+          const cvId = cvHref ? cvHref.match(/\/person\/(\d+)/)?.[1] : '';
+          const cvAvatarImg = cvLi.querySelector('img.avatar');
+          const cvAvatar = cvAvatarImg ? cvAvatarImg.getAttribute('src') || cvAvatarImg.src : '';
+          
+          if (cvName) {
+            const resolvedCvAvatar = cvAvatar ? formatCrtUrl(cvAvatar, 200) : '';
+            workCvs.push({
+              name: cvName,
+              id: cvId,
+              avatar: resolvedCvAvatar
+            });
+            if (!cvs.some(c => c.name === cvName)) {
+              cvs.push({
+                name: cvName,
+                id: cvId,
+                avatar: resolvedCvAvatar
+              });
+            }
+          }
+        });
+
+        if (subjectName) {
+          works.push({
+            name: subjectName,
+            role: jobName,
+            cvs: workCvs
+          });
+        }
+      });
+    }
+
+    return {
+      id,
+      name,
+      name_cn,
+      images,
+      infobox,
+      summary,
+      cvs,
+      works
+    };
+  }
+
   // ========================================================================
   // 网络与图片
   // ========================================================================
@@ -424,10 +552,10 @@
     ctx.fillRect(0, 0, w, h);
   }
 
-  function createCanvas() {
+  function createCanvas(w = LAYOUT.w, h = LAYOUT.h) {
     const canvas = document.createElement('canvas');
-    canvas.width = LAYOUT.w * LAYOUT.dpr;
-    canvas.height = LAYOUT.h * LAYOUT.dpr;
+    canvas.width = w * LAYOUT.dpr;
+    canvas.height = h * LAYOUT.dpr;
     const ctx = canvas.getContext('2d');
     ctx.scale(LAYOUT.dpr, LAYOUT.dpr);
     return { canvas, ctx };
@@ -461,8 +589,8 @@
     ctx.clip();
   }
 
-  // 等比裁剪绘制（object-fit: cover）：居中裁掉多余部分，避免方形专辑封面被拉伸
-  function drawImageCover(ctx, img, dx, dy, dw, dh) {
+  // 等比裁剪绘制（object-fit: cover）：居中或顶部裁掉多余部分
+  function drawImageCover(ctx, img, dx, dy, dw, dh, align = 'center') {
     const iw = img.naturalWidth || img.width;
     const ih = img.naturalHeight || img.height;
     if (!iw || !ih) { ctx.drawImage(img, dx, dy, dw, dh); return; }
@@ -470,7 +598,7 @@
     const sw = dw / scale;
     const sh = dh / scale;
     const sx = (iw - sw) / 2;
-    const sy = (ih - sh) / 2;
+    const sy = align === 'top' ? 0 : (ih - sh) / 2;
     ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
   }
 
@@ -614,6 +742,85 @@
       collWish,
       collDoing,
       collDone,
+    };
+  }
+
+  function prepareCharacterData(raw) {
+    const titleZh = (raw.name_cn || raw.name || '').trim();
+    const titleJa = raw.name_cn ? raw.name : '';
+    const summary = processSummary(raw.summary || '');
+
+    // CV details: support multiple CVs in name, first CV for avatar
+    const cvName = (raw.cvs || []).map(c => c.name).filter(Boolean).join(' / ');
+    const primaryCv = raw.cvs?.[0] || null;
+    const cvAvatar = primaryCv?.avatar || '';
+
+    // Featured Work
+    const featuredWork = raw.works?.find(w => w.role === '主角') || raw.works?.[0] || null;
+
+    // Filter and prioritize infobox keys
+    const PRIORITY_KEYS = [
+      '性别', '性別',
+      '生日',
+      '年龄', '年齢',
+      '血型',
+      '身高',
+      '体重',
+      'BWH', '三围', '三圍',
+      '星座',
+      '种族', '種族',
+      '职业', '職業',
+      '兴趣', '趣味',
+      '出身地', '出生地',
+      '身份', '身份'
+    ];
+    const EXCLUDE_KEYS = [
+      '简体中文名',
+      '别名',
+      '英文名',
+      '日文名',
+      '引用来源',
+      '姓名',
+      'CV',
+      '声优'
+    ];
+
+    const filteredInfobox = (raw.infobox || []).filter(item => {
+      return item && item.key && !EXCLUDE_KEYS.includes(item.key);
+    });
+
+    filteredInfobox.sort((a, b) => {
+      const idxA = PRIORITY_KEYS.indexOf(a.key);
+      const idxB = PRIORITY_KEYS.indexOf(b.key);
+      const hasA = idxA !== -1;
+      const hasB = idxB !== -1;
+      if (hasA && hasB) return idxA - idxB;
+      if (hasA) return -1;
+      if (hasB) return 1;
+      return 0;
+    });
+
+    const metaLines = [];
+    for (const item of filteredInfobox) {
+      if (metaLines.length >= 4) break;
+      const key = item.key;
+      const value = normalizeValue(item.value);
+      if (!key || !value) continue;
+      if (value.length > 30) continue;
+      metaLines.push({ key, value });
+    }
+
+    return {
+      id: raw.id,
+      titleZh,
+      titleJa,
+      summary,
+      cvName,
+      cvAvatar,
+      cvs: raw.cvs || [],
+      featuredWork,
+      works: raw.works || [],
+      metaLines
     };
   }
 
@@ -982,6 +1189,557 @@
     return canvas;
   }
 
+  async function renderCharacterCard(rawData, posterImg, qrImg, logoImg, cvImgs, opts = {}) {
+    await document.fonts.ready;
+
+    const data = prepareCharacterData(rawData);
+
+    // Dynamic panel height — fit whichever side (CV or Works) is taller
+    const workCount = Math.min(3, data.works.length);
+    const isMultiWork = workCount > 1;
+    const cvCount = Math.min(3, data.cvs.length);
+    const isMultiCV = cvCount > 1;
+
+    // CV block height: label(10) + gap(8) + N×row(32) + (N-1)×rowGap(10)
+    const cvBlockH = isMultiCV
+      ? 10 + 8 + cvCount * 32 + (cvCount - 1) * 10
+      : 0;
+    // Work block height: label(10+17) + N×rowSpacing(22)
+    const workBlockH = isMultiWork
+      ? 27 + workCount * 22
+      : 0;
+    const contentH = Math.max(cvBlockH, workBlockH, 55);   // 55 = min single-row height
+    const panelPadV = 20;                                   // vertical padding inside panel
+    const ph = Math.ceil(contentH + panelPadV * 2);
+    const extraH = Math.max(0, ph - 90);                    // baseline panel is 90px
+    const cardH = LAYOUT.h + extraH;
+
+    const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
+    const tainted = opts.tainted || !posterImg;
+
+    // 1. 背景
+    ctx.save();
+    if (!tainted && posterImg) {
+      ctx.fillStyle = LAYOUT.colors.bg;
+      ctx.fillRect(0, 0, LAYOUT.w, cardH);
+      const blur = 40;
+      if (canvasFilterSupported()) {
+        ctx.filter = `blur(${blur}px) brightness(0.42)`;
+        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, cardH + blur * 2);
+        ctx.filter = 'none';
+      } else {
+        drawBlurredBackground(ctx, posterImg, LAYOUT.w, cardH, blur);
+      }
+    } else {
+      const grd = ctx.createLinearGradient(0, 0, LAYOUT.w, cardH);
+      grd.addColorStop(0, LAYOUT.colors.fallbackGradient[0]);
+      grd.addColorStop(0.45, LAYOUT.colors.fallbackGradient[1]);
+      grd.addColorStop(1, LAYOUT.colors.fallbackGradient[2]);
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, LAYOUT.w, cardH);
+    }
+    ctx.restore();
+
+    // 2. 暗色遮罩
+    const overlay = ctx.createRadialGradient(LAYOUT.w / 2, 0, 0, LAYOUT.w / 2, cardH / 2, cardH);
+    overlay.addColorStop(0, 'rgba(0,0,0,0.18)');
+    overlay.addColorStop(0.65, 'rgba(0,0,0,0.52)');
+    overlay.addColorStop(1, 'rgba(0,0,0,0.72)');
+    ctx.fillStyle = overlay;
+    ctx.fillRect(0, 0, LAYOUT.w, cardH);
+
+    // 3. 角色封面
+    if (!tainted && posterImg) {
+      ctx.save();
+      ctx.shadowColor = LAYOUT.poster.shadowColor;
+      ctx.shadowBlur = LAYOUT.poster.shadowBlur;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = LAYOUT.poster.shadowY;
+      roundRectPath(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
+      ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      clipRoundRect(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
+      drawImageCover(ctx, posterImg, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, 'top');
+      ctx.restore();
+    } else {
+      ctx.save();
+      fillRoundRect(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius, 'rgba(255,255,255,0.06)');
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.setLineDash([4, 4]);
+      roundRectPath(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.font = `12px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('头像加载失败', LAYOUT.poster.x + LAYOUT.poster.w / 2, LAYOUT.poster.y + LAYOUT.poster.h / 2);
+      ctx.restore();
+    }
+
+    // 4. 标题
+    const titleFontSize = data.titleZh.length > 16 ? LAYOUT.title.mainSizeLong : LAYOUT.title.mainSize;
+    const zhFont = `800 ${titleFontSize}px ${FONT_STACK.cn}`;
+    const zhLineH = titleFontSize * LAYOUT.title.lineHeight;
+    ctx.font = zhFont;
+    const zhLines = Math.max(1, Math.min(2,
+      Math.round(measureTextHeight(ctx, data.titleZh, LAYOUT.title.maxW, zhLineH, 2) / zhLineH)));
+    drawText(ctx, data.titleZh, LAYOUT.title.x, LAYOUT.title.y, {
+      font: zhFont,
+      color: LAYOUT.colors.textMain,
+      maxWidth: LAYOUT.title.maxW,
+      lineHeight: zhLineH,
+      maxLines: 2,
+    });
+    if (data.titleJa) {
+      const jaMaxLines = zhLines >= 2 ? 1 : 2;
+      const subLineH = LAYOUT.title.subSize * 1.35;
+      const subY = LAYOUT.title.y + zhLineH * zhLines + 8;
+      drawText(ctx, data.titleJa, LAYOUT.title.x, subY, {
+        font: `400 ${LAYOUT.title.subSize}px ${FONT_STACK.ja}`,
+        color: LAYOUT.colors.textSub,
+        maxWidth: LAYOUT.title.maxW,
+        lineHeight: subLineH,
+        maxLines: jaMaxLines,
+      });
+    }
+
+    // 5. Meta 信息
+    const metaMaxW = LAYOUT.w - 50 - LAYOUT.meta.x;
+    data.metaLines.forEach((line, i) => {
+      const y = LAYOUT.meta.y + i * LAYOUT.meta.lineHeight;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+
+      const label = line.key + ': ';
+      const val = line.value;
+
+      ctx.font = `400 ${LAYOUT.meta.size}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.fillText(label, LAYOUT.meta.x, y);
+      const lw = ctx.measureText(label).width;
+
+      ctx.font = `600 ${LAYOUT.meta.size}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textMain;
+
+      const maxValW = metaMaxW - lw;
+      let valText = val;
+      if (ctx.measureText(val).width > maxValW) {
+        const ell = '…';
+        while (valText.length && ctx.measureText(valText + ell).width > maxValW) {
+          valText = valText.slice(0, -1);
+        }
+        valText += ell;
+      }
+      ctx.fillText(valText, LAYOUT.meta.x + lw, y);
+    });
+
+    // 6. CV & Work Panel
+    const px = 40;
+    const py = 294;
+    const pw = 420;
+    const pradius = 24;
+
+    fillRoundRect(ctx, px, py, pw, ph, pradius, LAYOUT.colors.panelBg);
+    ctx.save();
+    ctx.strokeStyle = LAYOUT.colors.panelBorder;
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, px, py, pw, ph, pradius);
+    ctx.stroke();
+    ctx.restore();
+
+    const panelCenterY = py + ph / 2;
+
+    // Pre-compute both sides' natural label tops so we can top-align them
+    const _cvNaturalLabelY = isMultiCV
+      ? panelCenterY - cvBlockH / 2                              // multi-CV block top
+      : panelCenterY - 19;                                       // single-CV legacy offset
+    const _wkNaturalLabelY = isMultiWork
+      ? panelCenterY - (10 + 7 + 13 + (workCount - 1) * 22) / 2 // multi-work block top
+      : panelCenterY - 19;                                       // single-work legacy offset
+    // Both labels share the higher (smaller Y) of the two, giving top-alignment
+    const sharedLabelY = workCount > 0
+      ? Math.min(_cvNaturalLabelY, _wkNaturalLabelY)
+      : _cvNaturalLabelY;
+
+    if (data.cvs.length > 0) {
+      ctx.textAlign = 'left';
+
+      const avSize     = isMultiCV ? 32 : (cvImgs && cvImgs[0] ? 44 : 44);
+      const avRadius   = avSize / 2;
+      const nameIndent = 58 + avSize + 8;                // avatar left(58) + avatar + gap
+      const noAvIndent = 60;
+      const maxNameW   = isMultiCV
+        ? (cvImgs && cvImgs.length > 0 ? 220 - avSize : 148)
+        : (cvImgs && cvImgs[0] ? 106 : 160);
+      const cvX        = isMultiCV
+        ? (cvImgs && cvImgs.length > 0 ? nameIndent : noAvIndent)
+        : (cvImgs && cvImgs[0] ? 114 : 60);
+
+      if (isMultiCV) {
+        // Multiple CVs — larger avatars, exact vertical centering of whole block
+        const rowH     = avSize;       // row height = avatar height
+        const rowGap   = 10;           // gap between rows
+        const labelFontSize = 10;
+        const labelH   = labelFontSize;
+        const labelGap = 8;            // gap between label and first row
+        const fontSize = 15;
+
+        // total height of the block so we can center it
+        const totalBlockH = labelH + labelGap + cvCount * rowH + (cvCount - 1) * rowGap;
+        const blockTop    = panelCenterY - totalBlockH / 2;
+
+        // "声优 CV" label
+        ctx.font      = `400 ${labelFontSize}px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textSub;
+        ctx.textBaseline = 'top';
+        ctx.fillText('声优 CV', 58, sharedLabelY);
+
+        for (let i = 0; i < cvCount; i++) {
+          const cvName = data.cvs[i].name;
+          const rowTop = blockTop + labelH + labelGap + i * (rowH + rowGap);
+          const avY    = rowTop;                  // avatar top edge
+          const cvImg  = cvImgs && cvImgs[i];
+
+          // Draw circular avatar or grey placeholder
+          if (cvImg) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(58 + avRadius, avY + avRadius, avRadius, 0, Math.PI * 2);
+            ctx.closePath();
+            ctx.clip();
+            drawImageCover(ctx, cvImg, 58, avY, avSize, avSize);
+            ctx.restore();
+          } else {
+            fillRoundRect(ctx, 58, avY, avSize, avSize, avRadius, 'rgba(255,255,255,0.08)');
+          }
+
+          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
+          ctx.textBaseline = 'middle';
+          let nameText = cvName;
+          const curMaxNameW = cvImg ? maxNameW : 148;
+          if (ctx.measureText(nameText).width > curMaxNameW) {
+            const ell = '…';
+            while (nameText.length && ctx.measureText(nameText + ell).width > curMaxNameW) {
+              nameText = nameText.slice(0, -1);
+            }
+            nameText += ell;
+          }
+          ctx.fillStyle = LAYOUT.colors.textMain;
+          ctx.fillText(nameText, cvX, avY + avRadius);  // vertically center name with avatar
+        }
+      } else {
+        // Single CV: label and name vertically centered with large avatar (size 44x44)
+        const cvImg = cvImgs && cvImgs[0];
+        if (cvImg) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(58 + 22, panelCenterY, 22, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.clip();
+          drawImageCover(ctx, cvImg, 58, panelCenterY - 22, 44, 44);
+          ctx.restore();
+        }
+
+        ctx.font = `400 10px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textSub;
+        ctx.textBaseline = 'top';
+        ctx.fillText('声优 CV', cvX, sharedLabelY);
+
+        const cvName = data.cvs[0].name;
+        let fontSize = cvImg ? 15 : 16;
+        ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
+        let nameText = cvName;
+        while (fontSize > 10 && ctx.measureText(nameText).width > maxNameW) {
+          fontSize--;
+          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
+        }
+        if (ctx.measureText(nameText).width > maxNameW) {
+          const ell = '…';
+          while (nameText.length && ctx.measureText(nameText + ell).width > maxNameW) {
+            nameText = nameText.slice(0, -1);
+          }
+          nameText += ell;
+        }
+        ctx.fillStyle = LAYOUT.colors.textMain;
+        ctx.fillText(nameText, cvX, panelCenterY - 2);
+      }
+
+      drawVDivider(ctx, 230, py + 16, ph - 32, LAYOUT.divider2.alpha, 0.25, 0.75);
+
+      if (workCount > 0) {
+        ctx.textAlign = 'left';
+
+        if (isMultiWork) {
+          const spacing    = 22;
+          // Block geometry: label(10) + gap(7) + rows occupying (N-1)*spacing + rowH
+          // Row text is textBaseline='middle'; effective row height ≈ 13px (font size)
+          const rowH       = 13;
+          const workLabelH = 10;
+          const workGap    = 7;   // gap from label bottom to first row top
+          const workBlockH = workLabelH + workGap + rowH + (workCount - 1) * spacing;
+          const workBlockTop = panelCenterY - workBlockH / 2;
+          // firstWorkY = center of first row
+          const firstWorkY = workBlockTop + workLabelH + workGap + rowH / 2;
+
+          ctx.font = `400 10px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textSub;
+          ctx.textBaseline = 'top';
+          ctx.fillText('出演作品', 250, sharedLabelY);
+
+          for (let i = 0; i < workCount; i++) {
+            const w = data.works[i];
+            const wy = firstWorkY + i * spacing;
+            
+            const role = w.role || '出演';
+            ctx.font = `600 9px ${FONT_STACK.cn}`;
+            const rw = ctx.measureText(role).width + 12;
+
+            // Right align tags at x = 442
+            const rx = 442 - rw;
+            const maxWorkW = rx - 250 - 8;
+
+            ctx.font = `700 13px ${FONT_STACK.cn}`;
+            ctx.textBaseline = 'middle';
+            let workText = w.name;
+            if (ctx.measureText(workText).width > maxWorkW) {
+              const ell = '…';
+              while (workText.length && ctx.measureText(workText + ell).width > maxWorkW) {
+                workText = workText.slice(0, -1);
+              }
+              workText += ell;
+            }
+
+            ctx.fillStyle = LAYOUT.colors.textMain;
+            ctx.fillText(workText, 250, wy);
+
+            const ry = wy - 7.5;
+            const rh = 15;
+
+            fillRoundRect(ctx, rx, ry, rw, rh, 4, LAYOUT.colors.tagBg);
+            ctx.save();
+            ctx.strokeStyle = LAYOUT.colors.tagBorder;
+            ctx.lineWidth = 1;
+            roundRectPath(ctx, rx, ry, rw, rh, 4);
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.font = `600 9px ${FONT_STACK.cn}`;
+            ctx.fillStyle = LAYOUT.colors.accent;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(role, rx + rw / 2, ry + rh / 2);
+
+            ctx.textAlign = 'left';
+          }
+        } else {
+          const w = data.works[0];
+          ctx.font = `400 10px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textSub;
+          ctx.textBaseline = 'top';
+          ctx.fillText('出演作品', 250, sharedLabelY);
+
+          ctx.font = `700 13px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textMain;
+          
+          const workMaxW = 190;
+          let workText = w.name;
+          if (ctx.measureText(workText).width > workMaxW) {
+            const ell = '…';
+            while (workText.length && ctx.measureText(workText + ell).width > workMaxW) {
+              workText = workText.slice(0, -1);
+            }
+            workText += ell;
+          }
+          ctx.fillText(workText, 250, panelCenterY - 2);
+
+          const role = w.role || '出演';
+          ctx.font = `600 9px ${FONT_STACK.cn}`;
+          const rw = ctx.measureText(role).width;
+          const rx = 250;
+          const ry = panelCenterY + 18;
+          const rh = 16;
+          const rpad = 6;
+
+          fillRoundRect(ctx, rx, ry, rw + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
+          ctx.save();
+          ctx.strokeStyle = LAYOUT.colors.tagBorder;
+          ctx.lineWidth = 1;
+          roundRectPath(ctx, rx, ry, rw + rpad * 2, rh, 4);
+          ctx.stroke();
+          ctx.restore();
+
+          ctx.fillStyle = LAYOUT.colors.accent;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(role, rx + rpad + rw / 2, ry + rh / 2);
+        }
+      }
+    } else {
+      const hasWork1 = !!data.works[0];
+      const hasWork2 = !!data.works[1];
+
+      if (hasWork1) {
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = `400 10px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textSub;
+        ctx.fillText('出演作品', 60, py + 16);
+
+        ctx.font = `700 13px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textMain;
+        
+        const wMaxW = 140;
+        let w1Text = data.works[0].name;
+        if (ctx.measureText(w1Text).width > wMaxW) {
+          const ell = '…';
+          while (w1Text.length && ctx.measureText(w1Text + ell).width > wMaxW) {
+            w1Text = w1Text.slice(0, -1);
+          }
+          w1Text += ell;
+        }
+        ctx.fillText(w1Text, 60, py + 33);
+
+        const r1 = data.works[0].role || '出演';
+        ctx.font = `600 9px ${FONT_STACK.cn}`;
+        const rw1 = ctx.measureText(r1).width;
+        const rx1 = 60;
+        const ry1 = py + 54;
+        const rh = 16;
+        const rpad = 6;
+
+        fillRoundRect(ctx, rx1, ry1, rw1 + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
+        ctx.save();
+        ctx.strokeStyle = LAYOUT.colors.tagBorder;
+        ctx.lineWidth = 1;
+        roundRectPath(ctx, rx1, ry1, rw1 + rpad * 2, rh, 4);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = LAYOUT.colors.accent;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(r1, rx1 + rpad + rw1 / 2, ry1 + rh / 2);
+      }
+
+      if (hasWork2) {
+        drawVDivider(ctx, 240, py + 16, 58, LAYOUT.divider2.alpha, 0.25, 0.75);
+
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = `400 10px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textSub;
+        ctx.fillText('出演作品', 260, py + 16);
+
+        ctx.font = `700 13px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textMain;
+        
+        const wMaxW = 140;
+        let w2Text = data.works[1].name;
+        if (ctx.measureText(w2Text).width > wMaxW) {
+          const ell = '…';
+          while (w2Text.length && ctx.measureText(w2Text + ell).width > wMaxW) {
+            w2Text = w2Text.slice(0, -1);
+          }
+          w2Text += ell;
+        }
+        ctx.fillText(w2Text, 260, py + 33);
+
+        const r2 = data.works[1].role || '出演';
+        ctx.font = `600 9px ${FONT_STACK.cn}`;
+        const rw2 = ctx.measureText(r2).width;
+        const rx2 = 260;
+        const ry2 = py + 54;
+        const rh = 16;
+        const rpad = 6;
+
+        fillRoundRect(ctx, rx2, ry2, rw2 + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
+        ctx.save();
+        ctx.strokeStyle = LAYOUT.colors.tagBorder;
+        ctx.lineWidth = 1;
+        roundRectPath(ctx, rx2, ry2, rw2 + rpad * 2, rh, 4);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = LAYOUT.colors.accent;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(r2, rx2 + rpad + rw2 / 2, ry2 + rh / 2);
+      }
+
+      if (!hasWork1 && !hasWork2) {
+        ctx.font = `400 12px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.textSub;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('暂无出演作品信息', px + pw / 2, py + ph / 2);
+      }
+    }
+
+    // 7. 简介
+    if (data.summary) {
+      drawText(ctx, data.summary, LAYOUT.summary.x, 404 + extraH, {
+        font: `400 ${LAYOUT.summary.size}px ${FONT_STACK.cn}`,
+        color: 'rgba(245,245,247,0.70)',
+        maxWidth: LAYOUT.summary.w,
+        lineHeight: LAYOUT.summary.lineHeight,
+        maxLines: 8,
+      });
+    }
+
+    // 8. Footer
+    ctx.fillStyle = LAYOUT.colors.footerBg;
+    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y + extraH, LAYOUT.footer.w, LAYOUT.footer.h);
+
+    const qrAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.qrY;
+    ctx.save();
+    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
+    if (qrImg) {
+      const qrPad = 11;
+      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
+    }
+    ctx.restore();
+
+    const tipAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.tipY;
+    drawText(ctx, '扫码查看角色详情', LAYOUT.footer.tipX, tipAbsY, {
+      font: `700 14px ${FONT_STACK.cn}`,
+      color: LAYOUT.colors.footerDark,
+    });
+    drawText(ctx, `bgm.tv/character/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
+      font: `12px ${FONT_STACK.mono}`,
+      color: LAYOUT.colors.footerText,
+    });
+
+    if (logoImg) {
+      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
+      const drawH = logoImg.naturalHeight * lr;
+      const drawY = LAYOUT.footer.y + extraH + (LAYOUT.footer.h - drawH) / 2;
+      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
+    } else {
+      ctx.save();
+      ctx.fillStyle = LAYOUT.colors.footerDark;
+      ctx.font = `900 20px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
+      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.beginPath();
+      ctx.arc(dotX, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = LAYOUT.colors.footerDark;
+      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
+      ctx.restore();
+    }
+
+    return canvas;
+  }
+
+
+
   // ========================================================================
   // 导出
   // ========================================================================
@@ -1062,43 +1820,85 @@
   // ========================================================================
 
   async function generateShareCard(opts = {}) {
-    const id = opts.id || parseSubjectId();
-    if (!id) throw new Error('未能识别条目 ID');
     if (!isAllowedHost()) throw new Error('当前站点不在支持列表');
+
+    const characterId = opts.id || parseCharacterId();
+    const isChar = !!characterId && isCharacterPage();
 
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
     }
 
-    const data = scrapeSubjectPage();
+    if (isChar) {
+      const data = scrapeCharacterPage();
+      const posterUrl = data.images?.large || data.images?.medium || '';
+      const cvUrls = (data.cvs || []).slice(0, 3).map(c => c.avatar).filter(Boolean);
 
-    const [posterImg, qrImg, logoImg] = await Promise.all([
-      data.images ? loadImage(pickPosterUrl(data.images), { crossOrigin: 'anonymous' }).catch(err => {
-        console.warn('[share-card] 海报加载失败，使用降级布局', err.message);
-        return null;
-      }) : Promise.resolve(null),
-      makeQRImage(subjectPageUrl(id)).catch(err => {
-        console.warn('[share-card] QR 加载失败', err.message);
-        return null;
-      }),
-      loadLogoImage(),
-    ]);
+      const [posterImg, qrImg, logoImg, cvImgs] = await Promise.all([
+        posterUrl ? loadImage(posterUrl, { crossOrigin: 'anonymous' }).catch(err => {
+          console.warn('[share-card] 角色头像加载失败，使用降级布局', err.message);
+          return null;
+        }) : Promise.resolve(null),
+        makeQRImage(characterPageUrl(characterId)).catch(err => {
+          console.warn('[share-card] QR 加载失败', err.message);
+          return null;
+        }),
+        loadLogoImage(),
+        Promise.all(
+          cvUrls.map(url => loadImage(url, { crossOrigin: 'anonymous' }).catch(err => {
+            console.warn('[share-card] CV头像加载失败', url, err.message);
+            return null;
+          }))
+        )
+      ]);
 
-    const canvas = await renderCard(data, posterImg, qrImg, logoImg, {
-      tainted: !posterImg,
-    });
-
-    // toBlob 在 canvas 被污染（SecurityError）时抛异常；自动降级 toDataURL
-    let blob;
-    try {
-      blob = await exportPNG(canvas);
-    } catch (secErr) {
-      console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
-      blob = await exportPNGFallback(canvas).catch(e2 => {
-        throw new Error('图片导出失败：' + secErr.message);
+      const canvas = await renderCharacterCard(data, posterImg, qrImg, logoImg, cvImgs, {
+        tainted: !posterImg,
       });
+
+      let blob;
+      try {
+        blob = await exportPNG(canvas);
+      } catch (secErr) {
+        console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
+        blob = await exportPNGFallback(canvas).catch(e2 => {
+          throw new Error('图片导出失败：' + secErr.message);
+        });
+      }
+      return { canvas, blob, id: characterId, data };
+    } else {
+      const id = opts.id || parseSubjectId();
+      if (!id) throw new Error('未能识别条目 ID');
+
+      const data = scrapeSubjectPage();
+
+      const [posterImg, qrImg, logoImg] = await Promise.all([
+        data.images ? loadImage(pickPosterUrl(data.images), { crossOrigin: 'anonymous' }).catch(err => {
+          console.warn('[share-card] 海报加载失败，使用降级布局', err.message);
+          return null;
+        }) : Promise.resolve(null),
+        makeQRImage(subjectPageUrl(id)).catch(err => {
+          console.warn('[share-card] QR 加载失败', err.message);
+          return null;
+        }),
+        loadLogoImage(),
+      ]);
+
+      const canvas = await renderCard(data, posterImg, qrImg, logoImg, {
+        tainted: !posterImg,
+      });
+
+      let blob;
+      try {
+        blob = await exportPNG(canvas);
+      } catch (secErr) {
+        console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
+        blob = await exportPNGFallback(canvas).catch(e2 => {
+          throw new Error('图片导出失败：' + secErr.message);
+        });
+      }
+      return { canvas, blob, id, data };
     }
-    return { canvas, blob, id, data };
   }
 
   // ========================================================================
@@ -1110,8 +1910,11 @@
     FONT_STACK,
     logoUrl,
     parseSubjectId,
+    parseCharacterId,
     isAllowedHost,
     subjectPageUrl,
+    characterPageUrl,
+    isCharacterPage,
     pickPosterUrl,
     normalizeValue,
     pickStaff,
@@ -1121,6 +1924,7 @@
     processSummary,
     retry,
     scrapeSubjectPage,
+    scrapeCharacterPage,
     loadImage,
     makeQRImage,
     loadLogoImage,
@@ -1131,7 +1935,9 @@
     drawText,
     measureTextHeight,
     prepareData,
+    prepareCharacterData,
     renderCard,
+    renderCharacterCard,
     exportPNG,
     exportPNGFallback,
     dataURLToBlob,
@@ -1164,13 +1970,13 @@
     const style = document.createElement('style');
     style.id = `${ns}-styles`;
     style.textContent = `
-      .${ns}-trigger { cursor: pointer; }
+      .${ns}-trigger-btn { cursor: pointer; }
       .${ns}-ico {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        vertical-align: -3px;
-        background: center / 15px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F09199' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='3'/%3E%3Ccircle cx='8.5' cy='10' r='1.5'/%3E%3Cpath d='M21 16l-5-5L5 20'/%3E%3C/svg%3E");
+        display: inline-block !important;
+        width: 16px !important;
+        height: 16px !important;
+        vertical-align: -3px !important;
+        background: center / 15px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F09199' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='3'/%3E%3Ccircle cx='8.5' cy='10' r='1.5'/%3E%3Cpath d='M21 16l-5-5L5 20'/%3E%3C/svg%3E") !important;
       }
       .${ns}-pill {
         display: inline-flex;
@@ -1371,7 +2177,7 @@
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
-      core.download(blob, `bgm-share-card-${core.parseSubjectId()}.png`);
+      core.download(blob, `bgm-share-card-${core.parseSubjectId() || core.parseCharacterId()}.png`);
     });
 
     if (!ios) {
@@ -1408,7 +2214,34 @@
   }
 
   function injectButton() {
-    if (document.querySelector(`.${ns}-trigger, .${ns}-pill`)) return;
+    if (document.querySelector(`.${ns}-trigger, .${ns}-pill, .${ns}-trigger-btn`)) return;
+
+    if (core.parseCharacterId()) {
+      const navTabs = document.querySelector('ul.navTabs');
+      if (navTabs) {
+        const li = document.createElement('li');
+        li.className = 'collect center';
+        li.style.marginLeft = 'auto';
+        const span = document.createElement('span');
+        span.className = 'collect action';
+        const a = document.createElement('a');
+        a.className = `icon icon-m ${ns}-trigger-btn`;
+        a.href = 'javascript:void(0);';
+        a.innerHTML = `<span class="ico ${ns}-ico">&nbsp;</span><span class="title">分享卡片</span>`;
+        a.style.cursor = 'pointer';
+        a.addEventListener('click', (e) => { e.preventDefault(); runGenerate(); });
+        span.appendChild(a);
+        li.appendChild(span);
+        const collectLi = navTabs.querySelector('li.collect');
+        if (collectLi) {
+          collectLi.before(li);
+          collectLi.style.setProperty('margin-left', '0px', 'important');
+        } else {
+          navTabs.appendChild(li);
+        }
+        return;
+      }
+    }
 
     const shareBtn = document.querySelector('.shareBtn');
     if (shareBtn) {
@@ -1443,7 +2276,7 @@
   return {
     init() {
       ensureStyles();
-      if (core.parseSubjectId()) injectButton();
+      if (core.parseSubjectId() || core.parseCharacterId()) injectButton();
     },
     showPreview,
     showError,
@@ -1452,7 +2285,7 @@
 }
 
   function start() {
-    if (!/\/subject\/\d+/.test(location.pathname)) return;
+    if (!/\/(subject|character)\/\d+/.test(location.pathname)) return;
     if (/^\/m\//.test(location.pathname)) return;
     createUI(core).init();
   }

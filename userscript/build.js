@@ -86,7 +86,7 @@ function buildWrapper(coreSource, wrapperSource) {
   ${uiBody}
 
   function start() {
-    if (!/\\/subject\\/\\d+/.test(location.pathname)) return;
+    if (!/\\/(subject|character)\\/\\d+/.test(location.pathname)) return;
     if (/^\\/m\\//.test(location.pathname)) return;
     createUI(core).init();
   }

@@ -7,6 +7,9 @@
 // @match        *://bgm.tv/subject/*
 // @match        *://bangumi.tv/subject/*
 // @match        *://chii.in/subject/*
+// @match        *://bgm.tv/character/*
+// @match        *://bangumi.tv/character/*
+// @match        *://chii.in/character/*
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -24,13 +27,13 @@ function createUI(core) {
     const style = document.createElement('style');
     style.id = `${ns}-styles`;
     style.textContent = `
-      .${ns}-trigger { cursor: pointer; }
+      .${ns}-trigger-btn { cursor: pointer; }
       .${ns}-ico {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        vertical-align: -3px;
-        background: center / 15px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F09199' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='3'/%3E%3Ccircle cx='8.5' cy='10' r='1.5'/%3E%3Cpath d='M21 16l-5-5L5 20'/%3E%3C/svg%3E");
+        display: inline-block !important;
+        width: 16px !important;
+        height: 16px !important;
+        vertical-align: -3px !important;
+        background: center / 15px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F09199' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='3'/%3E%3Ccircle cx='8.5' cy='10' r='1.5'/%3E%3Cpath d='M21 16l-5-5L5 20'/%3E%3C/svg%3E") !important;
       }
       .${ns}-pill {
         display: inline-flex;
@@ -231,7 +234,7 @@ function createUI(core) {
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
-      core.download(blob, `bgm-share-card-${core.parseSubjectId()}.png`);
+      core.download(blob, `bgm-share-card-${core.parseSubjectId() || core.parseCharacterId()}.png`);
     });
 
     if (!ios) {
@@ -264,7 +267,34 @@ function createUI(core) {
   }
 
   function injectButton() {
-    if (document.querySelector(`.${ns}-trigger, .${ns}-pill`)) return;
+    if (document.querySelector(`.${ns}-trigger, .${ns}-pill, .${ns}-trigger-btn`)) return;
+
+    if (core.parseCharacterId()) {
+      const navTabs = document.querySelector('ul.navTabs');
+      if (navTabs) {
+        const li = document.createElement('li');
+        li.className = 'collect center';
+        li.style.marginLeft = 'auto';
+        const span = document.createElement('span');
+        span.className = 'collect action';
+        const a = document.createElement('a');
+        a.className = `icon icon-m ${ns}-trigger-btn`;
+        a.href = 'javascript:void(0);';
+        a.innerHTML = `<span class="ico ${ns}-ico">&nbsp;</span><span class="title">分享卡片</span>`;
+        a.style.cursor = 'pointer';
+        a.addEventListener('click', (e) => { e.preventDefault(); runGenerate(); });
+        span.appendChild(a);
+        li.appendChild(span);
+        const collectLi = navTabs.querySelector('li.collect');
+        if (collectLi) {
+          collectLi.before(li);
+          collectLi.style.setProperty('margin-left', '0px', 'important');
+        } else {
+          navTabs.appendChild(li);
+        }
+        return;
+      }
+    }
 
     const shareBtn = document.querySelector('.shareBtn');
     if (shareBtn) {
@@ -299,7 +329,7 @@ function createUI(core) {
   return {
     init() {
       ensureStyles();
-      if (core.parseSubjectId()) injectButton();
+      if (core.parseSubjectId() || core.parseCharacterId()) injectButton();
     },
   };
 }
