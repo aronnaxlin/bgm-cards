@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-09T15:46:40.981Z
+// 生成时间：2026-07-09T16:04:13.858Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -2784,9 +2784,17 @@
     createUI(core).init();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
+  // 让 bangumi 先完成加载与渲染，再在浏览器空闲时挂载组件，避免与首屏抢主线程
+  function scheduleStart() {
+    var idle = window.requestIdleCallback || function (cb) {
+      return setTimeout(function () { cb(); }, 200);
+    };
+    idle(start, { timeout: 2000 });
+  }
+
+  if (document.readyState === 'complete') {
+    scheduleStart();
   } else {
-    start();
+    window.addEventListener('load', scheduleStart, { once: true });
   }
 })();

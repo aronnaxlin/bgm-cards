@@ -91,10 +91,18 @@ function buildWrapper(coreSource, wrapperSource) {
     createUI(core).init();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
+  // 让 bangumi 先完成加载与渲染，再在浏览器空闲时挂载组件，避免与首屏抢主线程
+  function scheduleStart() {
+    var idle = window.requestIdleCallback || function (cb) {
+      return setTimeout(function () { cb(); }, 200);
+    };
+    idle(start, { timeout: 2000 });
+  }
+
+  if (document.readyState === 'complete') {
+    scheduleStart();
   } else {
-    start();
+    window.addEventListener('load', scheduleStart, { once: true });
   }
 })();
 `;
