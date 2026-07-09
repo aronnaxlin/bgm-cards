@@ -124,6 +124,23 @@
     return /^\/character\//.test(location.pathname);
   }
 
+  function parsePersonId() {
+    if (typeof location === 'undefined') return null;
+    if (/^\/m\//.test(location.pathname)) return null;
+    const m = location.pathname.match(/^\/person\/(\d+)(?:\/|$)/);
+    return m ? m[1] : null;
+  }
+
+  function personPageUrl(id) {
+    if (typeof location === 'undefined') return `https://bgm.tv/person/${id}`;
+    return `${location.protocol}//${location.hostname}/person/${id}`;
+  }
+
+  function isPersonPage() {
+    if (typeof location === 'undefined') return false;
+    return /^\/person\//.test(location.pathname);
+  }
+
   function pickPosterUrl(images) {
     if (!images) return null;
     const preferred = images.medium || images.common || images.large || images.grid || images.small;
@@ -458,6 +475,68 @@
       cvs,
       works
     };
+  }
+
+  // 真人（声优/制作/作者等）页抓取。与角色页共享模板，但没有 CV 栏，
+  // 作品列表是「本人参与的作品 + 职务」，职务 badge 可能是 .badge_job（原作/脚本…）
+  // 或 .badge_job_tip（CV），两者都取。
+  function scrapePersonPage() {
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+    if (!document.querySelector('#infobox') && !document.querySelector('.infobox')) {
+      throw new Error('未找到人物信息，请确认已在人物页');
+    }
+
+    const id = parsePersonId();
+
+    const titleEl = $('h1.nameSingle a');
+    const name = titleEl?.textContent?.trim() || '';
+    const name_cn = titleEl?.getAttribute('title') || $('h1.nameSingle small.grey')?.textContent?.trim() || '';
+
+    const coverEl = $('a.thickbox.cover img') || $('img.cover') || $('.infobox img');
+    let rawCover = coverEl?.getAttribute('src') || '';
+    if (!rawCover && coverEl) rawCover = coverEl.src || '';
+    const cover = rawCover
+      ? (rawCover.startsWith('//') ? 'https:' + rawCover : rawCover)
+      : '';
+    const largeCover = formatCrtUrl(cover, 800);
+    const images = cover ? { large: largeCover, medium: cover } : null;
+
+    const infobox = $$('#infobox li').map(li => {
+      const tip = li.querySelector('span.tip');
+      const key = tip?.textContent?.replace(':', '').trim() || '';
+      const value = li.textContent.replace(tip?.textContent || '', '').trim();
+      return key ? { key, value } : null;
+    }).filter(Boolean);
+
+    const summaryEl = $('#char_contents') || $('.detail');
+    const summary = summaryEl?.textContent?.trim() || '';
+
+    const works = [];
+    const castList = document.querySelector('ul.browserList.castTypeFilterList');
+    if (castList) {
+      const lis = Array.from(castList.querySelectorAll(':scope > li'));
+      lis.forEach(li => {
+        const subjectA = li.querySelector('.innerLeftItem h3 a.l')
+          || li.querySelector('.innerLeftItem h3 a')
+          || li.querySelector('h3 a.l');
+        const subjectName = subjectA ? subjectA.textContent.trim() : '';
+
+        const jobBadge = li.querySelector('.badge_job') || li.querySelector('.badge_job_tip');
+        const jobName = jobBadge ? jobBadge.textContent.trim() : '';
+
+        // 声优作品：右侧列出其配演的角色
+        const roles = Array.from(li.querySelectorAll('ul.innerRightList h3 a'))
+          .map(a => a.textContent.trim()).filter(Boolean);
+
+        if (subjectName) {
+          works.push({ name: subjectName, role: jobName, roles });
+        }
+      });
+    }
+
+    return { id, name, name_cn, images, infobox, summary, works };
   }
 
   // ========================================================================
@@ -818,6 +897,91 @@
       featuredWork,
       works: raw.works || [],
       metaLines
+    };
+  }
+
+  function preparePersonData(raw) {
+    const titleZh = (raw.name_cn || raw.name || '').trim();
+    const titleJa = raw.name_cn ? raw.name : '';
+    const summary = processSummary(raw.summary || '');
+
+    // 优先级与排除项按 bangumi archive 中真人 infobox 键频率统计得出：
+    // 高频有意义字段优先，社交链接类与命名别名类一律排除（它们不适合占 meta 行）。
+    // 优先级键按 bangumi archive 中真人 infobox 键频率统计排序，含常见变体。
+    const PRIORITY_KEYS = [
+      '性别', '性別',
+      '生日',
+      '卒日',
+      '出生地', '出身地', '出身', '籍贯',
+      '国籍',
+      '血型',
+      '身高', '体重',
+      'BWH', '三围', '三圍',
+      '职业', '職業',
+      '事务所', '事務所', '经纪公司', '經紀公司', '唱片公司', '所属公司', '所属',
+      '出道时间',
+      '活跃年代',
+      '星座',
+      '教育程度',
+      '配偶',
+      '语言',
+    ];
+    // 命名别名类 + 明确的链接类键。链接字段种类繁多（事务所资料页/官网/HP/
+    // FanClub…），无法穷举，故再叠加下方「值是 URL 则跳过」的兜底。
+    const EXCLUDE_KEYS = [
+      '简体中文名', '别名', '英文名', '日文名', '第二中文名',
+      '罗马字', '纯假名', '昵称', '其他名义', '姓名',
+      '引用来源',
+      'Twitter', 'twitter', '推特', 'X', '链接', 'HP', 'Pixiv', 'pixiv',
+      'Instagram', '微博', 'weibo', '官网', '官方网站', '官方站点', '主页',
+      'Blog', 'blog', 'Website', 'imdb_id', 'bilibili', 'Facebook',
+      'YouTube', 'niconico', '网站', 'FanClub',
+    ];
+    const isLinkKey = (k) => /资料页|资料|页面|主页|官网|官方|网站|site|web|link|HP|blog/i.test(k);
+
+    const filteredInfobox = (raw.infobox || []).filter(item => {
+      return item && item.key && !EXCLUDE_KEYS.includes(item.key) && !isLinkKey(item.key);
+    });
+
+    filteredInfobox.sort((a, b) => {
+      const idxA = PRIORITY_KEYS.indexOf(a.key);
+      const idxB = PRIORITY_KEYS.indexOf(b.key);
+      const hasA = idxA !== -1;
+      const hasB = idxB !== -1;
+      if (hasA && hasB) return idxA - idxB;
+      if (hasA) return -1;
+      if (hasB) return 1;
+      return 0;
+    });
+
+    const metaLines = [];
+    for (const item of filteredInfobox) {
+      if (metaLines.length >= 4) break;
+      const key = item.key;
+      const value = normalizeValue(item.value);
+      if (!key || !value) continue;
+      if (/^(https?:)?\/\//i.test(value)) continue;   // 值是 URL（链接字段）一律跳过
+      if (value.length > 30) continue;
+      metaLines.push({ key, value });
+    }
+
+    // 参与作品：去重、保留职务；渲染层最多取 5 部
+    const seenWork = new Set();
+    const works = [];
+    for (const w of (raw.works || [])) {
+      const name = (w.name || '').trim();
+      if (!name || seenWork.has(name)) continue;
+      seenWork.add(name);
+      works.push({ name, role: (w.role || '').trim() });
+    }
+
+    return {
+      id: raw.id,
+      titleZh,
+      titleJa,
+      summary,
+      metaLines,
+      works,
     };
   }
 
@@ -1737,6 +1901,285 @@
 
 
 
+  async function renderPersonCard(rawData, posterImg, qrImg, logoImg, opts = {}) {
+    await document.fonts.ready;
+
+    const data = preparePersonData(rawData);
+
+    // 动态面板高度：随参与作品条数增长（最多 5 部）
+    const workCount = Math.min(5, data.works.length);
+    const labelH = 10;
+    const labelGap = 12;
+    const rowH = 28;
+    const contentH = Math.max(workCount > 0 ? labelH + labelGap + workCount * rowH : 55, 55);
+    const panelPadV = 20;
+    const ph = Math.ceil(contentH + panelPadV * 2);
+    const extraH = Math.max(0, ph - 90);
+    const cardH = LAYOUT.h + extraH;
+
+    const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
+    const tainted = opts.tainted || !posterImg;
+
+    // 1. 背景
+    ctx.save();
+    if (!tainted && posterImg) {
+      ctx.fillStyle = LAYOUT.colors.bg;
+      ctx.fillRect(0, 0, LAYOUT.w, cardH);
+      const blur = 40;
+      if (canvasFilterSupported()) {
+        ctx.filter = `blur(${blur}px) brightness(0.42)`;
+        drawImageCover(ctx, posterImg, -blur, -blur, LAYOUT.w + blur * 2, cardH + blur * 2);
+        ctx.filter = 'none';
+      } else {
+        drawBlurredBackground(ctx, posterImg, LAYOUT.w, cardH, blur);
+      }
+    } else {
+      const grd = ctx.createLinearGradient(0, 0, LAYOUT.w, cardH);
+      grd.addColorStop(0, LAYOUT.colors.fallbackGradient[0]);
+      grd.addColorStop(0.45, LAYOUT.colors.fallbackGradient[1]);
+      grd.addColorStop(1, LAYOUT.colors.fallbackGradient[2]);
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, LAYOUT.w, cardH);
+    }
+    ctx.restore();
+
+    // 2. 暗色遮罩
+    const overlay = ctx.createRadialGradient(LAYOUT.w / 2, 0, 0, LAYOUT.w / 2, cardH / 2, cardH);
+    overlay.addColorStop(0, 'rgba(0,0,0,0.18)');
+    overlay.addColorStop(0.65, 'rgba(0,0,0,0.52)');
+    overlay.addColorStop(1, 'rgba(0,0,0,0.72)');
+    ctx.fillStyle = overlay;
+    ctx.fillRect(0, 0, LAYOUT.w, cardH);
+
+    // 3. 人物头像
+    if (!tainted && posterImg) {
+      ctx.save();
+      ctx.shadowColor = LAYOUT.poster.shadowColor;
+      ctx.shadowBlur = LAYOUT.poster.shadowBlur;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = LAYOUT.poster.shadowY;
+      roundRectPath(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
+      ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      clipRoundRect(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
+      drawImageCover(ctx, posterImg, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, 'top');
+      ctx.restore();
+    } else {
+      ctx.save();
+      fillRoundRect(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius, 'rgba(255,255,255,0.06)');
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.setLineDash([4, 4]);
+      roundRectPath(ctx, LAYOUT.poster.x, LAYOUT.poster.y, LAYOUT.poster.w, LAYOUT.poster.h, LAYOUT.poster.radius);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.font = `12px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('头像加载失败', LAYOUT.poster.x + LAYOUT.poster.w / 2, LAYOUT.poster.y + LAYOUT.poster.h / 2);
+      ctx.restore();
+    }
+
+    // 4. 标题
+    const titleFontSize = data.titleZh.length > 16 ? LAYOUT.title.mainSizeLong : LAYOUT.title.mainSize;
+    const zhFont = `800 ${titleFontSize}px ${FONT_STACK.cn}`;
+    const zhLineH = titleFontSize * LAYOUT.title.lineHeight;
+    ctx.font = zhFont;
+    const zhLines = Math.max(1, Math.min(2,
+      Math.round(measureTextHeight(ctx, data.titleZh, LAYOUT.title.maxW, zhLineH, 2) / zhLineH)));
+    drawText(ctx, data.titleZh, LAYOUT.title.x, LAYOUT.title.y, {
+      font: zhFont,
+      color: LAYOUT.colors.textMain,
+      maxWidth: LAYOUT.title.maxW,
+      lineHeight: zhLineH,
+      maxLines: 2,
+    });
+    if (data.titleJa) {
+      const jaMaxLines = zhLines >= 2 ? 1 : 2;
+      const subLineH = LAYOUT.title.subSize * 1.35;
+      const subY = LAYOUT.title.y + zhLineH * zhLines + 8;
+      drawText(ctx, data.titleJa, LAYOUT.title.x, subY, {
+        font: `400 ${LAYOUT.title.subSize}px ${FONT_STACK.ja}`,
+        color: LAYOUT.colors.textSub,
+        maxWidth: LAYOUT.title.maxW,
+        lineHeight: subLineH,
+        maxLines: jaMaxLines,
+      });
+    }
+
+    // 5. Meta 信息
+    const metaMaxW = LAYOUT.w - 50 - LAYOUT.meta.x;
+    data.metaLines.forEach((line, i) => {
+      const y = LAYOUT.meta.y + i * LAYOUT.meta.lineHeight;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+
+      const label = line.key + ': ';
+      ctx.font = `400 ${LAYOUT.meta.size}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.fillText(label, LAYOUT.meta.x, y);
+      const lw = ctx.measureText(label).width;
+
+      ctx.font = `600 ${LAYOUT.meta.size}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textMain;
+      const maxValW = metaMaxW - lw;
+      let valText = line.value;
+      if (ctx.measureText(valText).width > maxValW) {
+        const ell = '…';
+        while (valText.length && ctx.measureText(valText + ell).width > maxValW) {
+          valText = valText.slice(0, -1);
+        }
+        valText += ell;
+      }
+      ctx.fillText(valText, LAYOUT.meta.x + lw, y);
+    });
+
+    // 6. 参与作品面板（全宽单栏）
+    const px = 40;
+    const py = 294;
+    const pw = 420;
+    const pradius = 24;
+
+    fillRoundRect(ctx, px, py, pw, ph, pradius, LAYOUT.colors.panelBg);
+    ctx.save();
+    ctx.strokeStyle = LAYOUT.colors.panelBorder;
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, px, py, pw, ph, pradius);
+    ctx.stroke();
+    ctx.restore();
+
+    const panelCenterY = py + ph / 2;
+
+    if (workCount > 0) {
+      const blockH = labelH + labelGap + workCount * rowH;
+      const blockTop = panelCenterY - blockH / 2;
+
+      // 标签
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.font = `400 ${labelH}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.fillText('参与作品', px + 24, blockTop);
+
+      const nameX = px + 24;
+      const rightPad = 24;
+      const firstRowCenter = blockTop + labelH + labelGap + rowH / 2;
+
+      for (let i = 0; i < workCount; i++) {
+        const w = data.works[i];
+        const cy = firstRowCenter + i * rowH;
+
+        // 右侧职务药丸
+        const role = w.role || '出演';
+        ctx.font = `600 10px ${FONT_STACK.cn}`;
+        const rw = ctx.measureText(role).width;
+        const pillPad = 8;
+        const pillW = rw + pillPad * 2;
+        const pillH = 18;
+        const pillX = px + pw - rightPad - pillW;
+        const pillY = cy - pillH / 2;
+
+        // 作品名（左，按到药丸的间距截断）
+        const nameMaxW = pillX - nameX - 12;
+        ctx.font = `700 14px ${FONT_STACK.cn}`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        let nameText = w.name;
+        if (ctx.measureText(nameText).width > nameMaxW) {
+          const ell = '…';
+          while (nameText.length && ctx.measureText(nameText + ell).width > nameMaxW) {
+            nameText = nameText.slice(0, -1);
+          }
+          nameText += ell;
+        }
+        ctx.fillStyle = LAYOUT.colors.textMain;
+        ctx.fillText(nameText, nameX, cy);
+
+        fillRoundRect(ctx, pillX, pillY, pillW, pillH, 4, LAYOUT.colors.tagBg);
+        ctx.save();
+        ctx.strokeStyle = LAYOUT.colors.tagBorder;
+        ctx.lineWidth = 1;
+        roundRectPath(ctx, pillX, pillY, pillW, pillH, 4);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.font = `600 10px ${FONT_STACK.cn}`;
+        ctx.fillStyle = LAYOUT.colors.accent;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(role, pillX + pillW / 2, cy);
+        ctx.textAlign = 'left';
+      }
+    } else {
+      ctx.font = `400 12px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('暂无参与作品信息', px + pw / 2, panelCenterY);
+    }
+
+    // 7. 简介
+    if (data.summary) {
+      drawText(ctx, data.summary, LAYOUT.summary.x, 404 + extraH, {
+        font: `400 ${LAYOUT.summary.size}px ${FONT_STACK.cn}`,
+        color: 'rgba(245,245,247,0.70)',
+        maxWidth: LAYOUT.summary.w,
+        lineHeight: LAYOUT.summary.lineHeight,
+        maxLines: 8,
+      });
+    }
+
+    // 8. Footer
+    ctx.fillStyle = LAYOUT.colors.footerBg;
+    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y + extraH, LAYOUT.footer.w, LAYOUT.footer.h);
+
+    const qrAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.qrY;
+    ctx.save();
+    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
+    if (qrImg) {
+      const qrPad = 11;
+      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
+    }
+    ctx.restore();
+
+    const tipAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.tipY;
+    drawText(ctx, '扫码查看人物详情', LAYOUT.footer.tipX, tipAbsY, {
+      font: `700 14px ${FONT_STACK.cn}`,
+      color: LAYOUT.colors.footerDark,
+    });
+    drawText(ctx, `bgm.tv/person/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
+      font: `12px ${FONT_STACK.mono}`,
+      color: LAYOUT.colors.footerText,
+    });
+
+    if (logoImg) {
+      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
+      const drawH = logoImg.naturalHeight * lr;
+      const drawY = LAYOUT.footer.y + extraH + (LAYOUT.footer.h - drawH) / 2;
+      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
+    } else {
+      ctx.save();
+      ctx.fillStyle = LAYOUT.colors.footerDark;
+      ctx.font = `900 20px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
+      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.beginPath();
+      ctx.arc(dotX, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2 - 8, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = LAYOUT.colors.footerDark;
+      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
+      ctx.restore();
+    }
+
+    return canvas;
+  }
+
   // ========================================================================
   // 导出
   // ========================================================================
@@ -1821,12 +2264,44 @@
 
     const characterId = opts.id || parseCharacterId();
     const isChar = !!characterId && isCharacterPage();
+    const personId = opts.id || parsePersonId();
+    const isPerson = !!personId && isPersonPage();
 
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
     }
 
-    if (isChar) {
+    if (isPerson) {
+      const data = scrapePersonPage();
+      const posterUrl = data.images?.large || data.images?.medium || '';
+
+      const [posterImg, qrImg, logoImg] = await Promise.all([
+        posterUrl ? loadImage(posterUrl, { crossOrigin: 'anonymous' }).catch(err => {
+          console.warn('[share-card] 人物头像加载失败，使用降级布局', err.message);
+          return null;
+        }) : Promise.resolve(null),
+        makeQRImage(personPageUrl(personId)).catch(err => {
+          console.warn('[share-card] QR 加载失败', err.message);
+          return null;
+        }),
+        loadLogoImage(),
+      ]);
+
+      const canvas = await renderPersonCard(data, posterImg, qrImg, logoImg, {
+        tainted: !posterImg,
+      });
+
+      let blob;
+      try {
+        blob = await exportPNG(canvas);
+      } catch (secErr) {
+        console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
+        blob = await exportPNGFallback(canvas).catch(e2 => {
+          throw new Error('图片导出失败：' + secErr.message);
+        });
+      }
+      return { canvas, blob, id: personId, data };
+    } else if (isChar) {
       const data = scrapeCharacterPage();
       const posterUrl = data.images?.large || data.images?.medium || '';
       const cvUrls = (data.cvs || []).slice(0, 3).map(c => c.avatar).filter(Boolean);
@@ -1908,10 +2383,13 @@
     logoUrl,
     parseSubjectId,
     parseCharacterId,
+    parsePersonId,
     isAllowedHost,
     subjectPageUrl,
     characterPageUrl,
     isCharacterPage,
+    personPageUrl,
+    isPersonPage,
     pickPosterUrl,
     normalizeValue,
     pickStaff,
@@ -1922,6 +2400,7 @@
     retry,
     scrapeSubjectPage,
     scrapeCharacterPage,
+    scrapePersonPage,
     loadImage,
     makeQRImage,
     loadLogoImage,
@@ -1933,8 +2412,10 @@
     measureTextHeight,
     prepareData,
     prepareCharacterData,
+    preparePersonData,
     renderCard,
     renderCharacterCard,
+    renderPersonCard,
     exportPNG,
     exportPNGFallback,
     dataURLToBlob,

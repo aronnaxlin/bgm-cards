@@ -10,6 +10,9 @@
 // @match        *://bgm.tv/character/*
 // @match        *://bangumi.tv/character/*
 // @match        *://chii.in/character/*
+// @match        *://bgm.tv/person/*
+// @match        *://bangumi.tv/person/*
+// @match        *://chii.in/person/*
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -234,7 +237,7 @@ function createUI(core) {
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
-      core.download(blob, `bgm-share-card-${core.parseSubjectId() || core.parseCharacterId()}.png`);
+      core.download(blob, `bgm-share-card-${core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()}.png`);
     });
 
     if (!ios) {
@@ -269,7 +272,7 @@ function createUI(core) {
   function injectButton() {
     if (document.querySelector(`.${ns}-trigger, .${ns}-pill, .${ns}-trigger-btn`)) return;
 
-    if (core.parseCharacterId()) {
+    if (core.parseCharacterId() || core.parsePersonId()) {
       const navTabs = document.querySelector('ul.navTabs');
       if (navTabs) {
         const li = document.createElement('li');
@@ -329,7 +332,7 @@ function createUI(core) {
   return {
     init() {
       ensureStyles();
-      if (core.parseSubjectId() || core.parseCharacterId()) injectButton();
+      if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) injectButton();
     },
   };
 }
