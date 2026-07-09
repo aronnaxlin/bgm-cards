@@ -302,7 +302,18 @@
     }).filter(Boolean);
 
     const infoMap = Object.fromEntries(infobox.map(i => [i.key, i.value]));
-    const date = infoMap['放送开始'] || infoMap['发售日'] || infoMap['开始'] || infoMap['出版年份'] || '';
+    // 日期来源可能是放送/发售/连载/出版，标签需跟随来源，避免给动画标「发售」
+    const DATE_SOURCES = [
+      { key: '放送开始', label: '放送' },  // 动画
+      { key: '发售日期', label: '发售' },  // 游戏 / 音乐
+      { key: '发售日', label: '发售' },    // 书籍单行本
+      { key: '开始', label: '开始' },      // 书籍连载 / 三次元开播
+    ];
+    let date = '';
+    let dateLabel = '';
+    for (const s of DATE_SOURCES) {
+      if (infoMap[s.key]) { date = infoMap[s.key]; dateLabel = s.label; break; }
+    }
     const eps = parseInt(infoMap['话数'] || infoMap['集数'] || infoMap['册数'] || '0', 10) || 0;
 
     // 评分
@@ -329,7 +340,7 @@
       dropped: numFrom($('a[href*="/dropped"]')),
     };
 
-    return { id, name, name_cn, type, platform, date, eps, images, infobox, tags, summary, rating: { score, total, rank }, collection };
+    return { id, name, name_cn, type, platform, date, dateLabel, eps, images, infobox, tags, summary, rating: { score, total, rank }, collection };
   }
 
   // ========================================================================
@@ -574,6 +585,7 @@
     const titleZh = (raw.name_cn || raw.name || '').trim();
     const titleJa = raw.name_cn ? raw.name : '';
     const releaseDate = raw.date || '';
+    const releaseLabel = raw.dateLabel || '发售';
     const mediaType = mediaLabel(raw.type, raw.platform);
     const episodes = raw.eps || raw.total_episodes || 0;
 
@@ -599,6 +611,7 @@
       titleZh,
       titleJa,
       releaseDate,
+      releaseLabel,
       mediaType,
       episodes,
       staff1,
@@ -735,7 +748,7 @@
 
     // 5. Meta 信息（值过长时省略号截断：如多导演条目「猫和老鼠」，避免压到分割线/收藏区）
     const metaLines = [
-      { strong: data.releaseDate, rest: ' 发售' },
+      data.releaseDate ? { strong: data.releaseDate, rest: ` ${data.releaseLabel}` } : null,
       { strong: data.mediaType, rest: (data.episodes ? ` · ${data.episodes} 话` : '') },
       data.staff1.value ? { strong: data.staff1.key, rest: ` / ${data.staff1.value}` } : null,
       data.staff2.value ? { strong: data.staff2.key, rest: ` / ${data.staff2.value}` } : null,
