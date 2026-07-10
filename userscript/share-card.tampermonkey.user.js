@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T02:32:28.393Z
+// 生成时间：2026-07-10T02:42:15.766Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -730,6 +730,25 @@
     ctx.restore();
   }
 
+  // 中文标点避头尾（禁则处理）：
+  // NO_LINE_START —— 不允许出现在行首的标点（收尾类，如句号、逗号、右括号）；
+  // NO_LINE_END   —— 不允许出现在行末的标点（起头类，如左括号、开引号）。
+  const NO_LINE_START = '，。、；：！？）】」』〉》〕｝］,.!?;:)]}…·—’”';
+  const NO_LINE_END = '（【「『〈《〔｛［([{“‘';
+
+  // 给定「按宽度贪心切出的字符数 len」，按避头尾规则微调：
+  // 1) 行末若是起头类标点，则把它挪到下一行（len--）；
+  // 2) 行首（下一行开头）若是收尾类标点，则悬挂到当前行末（len++，最多挂 2 个）。
+  function applyKinsoku(str, len) {
+    if (len > 1 && NO_LINE_END.includes(str[len - 1])) len--;
+    let hang = 0;
+    while (len < str.length && hang < 2 && NO_LINE_START.includes(str[len])) {
+      len++;
+      hang++;
+    }
+    return len;
+  }
+
   function drawText(ctx, text, x, y, opts = {}) {
     const {
       font = `12px ${FONT_STACK.cn}`,
@@ -739,6 +758,7 @@
       maxLines = 1,
       align = 'left',
       baseline = 'top',
+      kinsoku = false,
     } = opts;
     ctx.save();
     ctx.font = font;
@@ -774,6 +794,8 @@
           let len = remaining.length;
           while (len > 0 && ctx.measureText(remaining.slice(0, len)).width > maxWidth) len--;
           if (len === 0) len = 1;
+          // 未到段落末尾时套用避头尾规则，避免标点落在行首 / 行末
+          if (kinsoku && len < remaining.length) len = applyKinsoku(remaining, len);
           let line = remaining.slice(0, len);
           remaining = remaining.slice(len).replace(/^\s+/, '');
           const hasMore = remaining.length > 0 || p < paragraphs.length - 1;
@@ -1450,6 +1472,7 @@
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
         maxLines: LAYOUT.summary.maxLines,
+        kinsoku: true,
       });
     }
 
@@ -1647,12 +1670,14 @@
       const avRadius   = avSize / 2;
       const nameIndent = 58 + avSize + 8;                // avatar left(58) + avatar + gap
       const noAvIndent = 60;
-      const maxNameW   = isMultiCV
-        ? (cvImgs && cvImgs.length > 0 ? 220 - avSize : 148)
-        : (cvImgs && cvImgs[0] ? 106 : 160);
+      const cvDividerX = 230;                            // 声优 / 出演作品 分界线
       const cvX        = isMultiCV
         ? (cvImgs && cvImgs.length > 0 ? nameIndent : noAvIndent)
         : (cvImgs && cvImgs[0] ? 114 : 60);
+      // 多 CV 时名字右边界必须留在分界线左侧（含 12px 内边距），过长则截断加省略号
+      const maxNameW   = isMultiCV
+        ? cvDividerX - 12 - cvX
+        : (cvImgs && cvImgs[0] ? 106 : 160);
 
       if (isMultiCV) {
         // Multiple CVs — larger avatars, exact vertical centering of whole block
@@ -1695,10 +1720,9 @@
           ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
           ctx.textBaseline = 'middle';
           let nameText = cvName;
-          const curMaxNameW = cvImg ? maxNameW : 148;
-          if (ctx.measureText(nameText).width > curMaxNameW) {
+          if (ctx.measureText(nameText).width > maxNameW) {
             const ell = '…';
-            while (nameText.length && ctx.measureText(nameText + ell).width > curMaxNameW) {
+            while (nameText.length && ctx.measureText(nameText + ell).width > maxNameW) {
               nameText = nameText.slice(0, -1);
             }
             nameText += ell;
@@ -1965,6 +1989,7 @@
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
         maxLines: summaryMaxLines,
+        kinsoku: true,
       });
     }
 
@@ -2212,6 +2237,7 @@
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
         maxLines: summaryMaxLines,
+        kinsoku: true,
       });
     }
 
