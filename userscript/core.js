@@ -998,12 +998,128 @@
     };
   }
 
+  // 二维码重上色：把「黑码 / 白底」重绘为「浅色码 / 透明底」，用于沉浸(深色)风格。
+  // 以灰度反相作为 alpha：越暗（码）越不透明，越亮（底）越透明，从而抠掉白底。
+  function recolorQRLight(img, rgb) {
+    const size = img.naturalWidth || 240;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0, size, size);
+    let imgData;
+    try {
+      imgData = x.getImageData(0, 0, size, size);
+    } catch (_) {
+      return img; // 被跨域污染无法读像素时回退原图，避免整卡报错
+    }
+    const d = imgData.data;
+    const [r, g, b] = rgb;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255 - lum;
+    }
+    x.putImageData(imgData, 0, 0);
+    return c;
+  }
+
+  // 把带透明通道的图（如深色 logo）整体染成单色，保留原始 alpha 边缘。
+  function tintImageToColor(img, color) {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0);
+    x.globalCompositeOperation = 'source-in';
+    x.fillStyle = color;
+    x.fillRect(0, 0, w, h);
+    return c;
+  }
+
+  // 统一页脚绘制。style: 'classic'(白底色块) | 'immersive'(取消白块 / 深色沉浸)。
+  // 三种卡片(条目 / 角色 / 人物)共用；offsetY 用于角色/人物卡的动态高度增量。
+  function drawFooter(ctx, opts) {
+    const { qrImg, logoImg, tipText, urlText, offsetY = 0, style = 'classic' } = opts;
+    const F = LAYOUT.footer;
+    const immersive = style === 'immersive';
+    const top = F.y + offsetY;
+
+    const headColor = immersive ? LAYOUT.colors.textMain : LAYOUT.colors.footerDark;
+    const subColor = immersive ? 'rgba(245,245,247,0.62)' : LAYOUT.colors.footerText;
+
+    if (immersive) {
+      // 不画白块——沿用上方统一背景；顶部加一条渐隐分隔线弱化与主体的拼接感
+      ctx.save();
+      const line = ctx.createLinearGradient(F.x, 0, F.x + F.w, 0);
+      line.addColorStop(0, 'rgba(255,255,255,0)');
+      line.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+      line.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = line;
+      ctx.fillRect(F.x + 32, top, F.w - 64, 1);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = LAYOUT.colors.footerBg;
+      ctx.fillRect(F.x, top, F.w, F.h);
+    }
+
+    // QR（qrY/tipY 为相对 footer 顶部的偏移，必须叠加 top）
+    const qrAbsY = top + F.qrY;
+    ctx.save();
+    clipRoundRect(ctx, F.qrX, qrAbsY, F.qrSize, F.qrSize, F.qrRadius);
+    if (!immersive) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(F.qrX, qrAbsY, F.qrSize, F.qrSize);
+    }
+    if (qrImg) {
+      const drawQr = immersive ? recolorQRLight(qrImg, [245, 245, 247]) : qrImg;
+      // 白色圆角底不变，二维码本身留更大内边距，方形码与圆角底更协调
+      const qrPad = 11;
+      ctx.drawImage(drawQr, F.qrX + qrPad, qrAbsY + qrPad, F.qrSize - qrPad * 2, F.qrSize - qrPad * 2);
+    }
+    ctx.restore();
+
+    // QR 提示文字
+    const tipAbsY = top + F.tipY;
+    drawText(ctx, tipText, F.tipX, tipAbsY, {
+      font: `700 14px ${FONT_STACK.cn}`,
+      color: headColor,
+    });
+    drawText(ctx, urlText, F.tipX, tipAbsY + 20, {
+      font: `12px ${FONT_STACK.mono}`,
+      color: subColor,
+    });
+
+    // Logo（沉浸风格把深色 logo 染成浅色以适配深底）
+    const logo = (immersive && logoImg) ? tintImageToColor(logoImg, headColor) : logoImg;
+    if (logo) {
+      const lr = F.logoW / logoImg.naturalWidth;
+      const drawH = logoImg.naturalHeight * lr;
+      const drawY = top + (F.h - drawH) / 2;
+      ctx.drawImage(logo, F.logoX, drawY, F.logoW, drawH);
+    } else {
+      ctx.save();
+      ctx.fillStyle = headColor;
+      ctx.font = `900 20px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      const midY = top + F.h / 2;
+      ctx.fillText('bangumi', F.logoX + F.logoW - 18, midY);
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.beginPath();
+      ctx.arc(F.logoX + F.logoW - 16, midY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = headColor;
+      ctx.fillText('.tv', F.logoX + F.logoW, midY);
+      ctx.restore();
+    }
+  }
+
   async function renderCard(rawData, posterImg, qrImg, logoImg, opts = {}) {
     await document.fonts.ready;
 
     const data = prepareData(rawData);
     const { canvas, ctx } = createCanvas();
     const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
 
     // 1. 背景
     ctx.save();
@@ -1310,55 +1426,12 @@
     }
 
     // 10. Footer
-    ctx.fillStyle = LAYOUT.colors.footerBg;
-    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y, LAYOUT.footer.w, LAYOUT.footer.h);
-
-    // QR（qrY/tipY 为相对 footer 顶部的偏移，必须叠加 footer.y）
-    const qrAbsY = LAYOUT.footer.y + LAYOUT.footer.qrY;
-    ctx.save();
-    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
-    if (qrImg) {
-      // 白色圆角底不变，二维码本身留更大内边距，方形码与圆角底更协调
-      const qrPad = 11;
-      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
-    }
-    ctx.restore();
-
-    // QR 提示文字
-    const tipAbsY = LAYOUT.footer.y + LAYOUT.footer.tipY;
-    drawText(ctx, '扫码查看条目', LAYOUT.footer.tipX, tipAbsY, {
-      font: `700 14px ${FONT_STACK.cn}`,
-      color: LAYOUT.colors.footerDark,
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看条目',
+      urlText: `bgm.tv/subject/${data.id}`,
+      style,
     });
-    drawText(ctx, `bgm.tv/subject/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
-      font: `12px ${FONT_STACK.mono}`,
-      color: LAYOUT.colors.footerText,
-    });
-
-    // Logo
-    if (logoImg) {
-      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
-      const drawH = logoImg.naturalHeight * lr;
-      const drawY = LAYOUT.footer.y + (LAYOUT.footer.h - drawH) / 2;
-      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
-    } else {
-      ctx.save();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.font = `900 20px ${FONT_STACK.cn}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + LAYOUT.footer.h / 2);
-      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
-      ctx.fillStyle = LAYOUT.colors.accent;
-      ctx.beginPath();
-      ctx.arc(dotX, LAYOUT.footer.y + LAYOUT.footer.h / 2, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + LAYOUT.footer.h / 2);
-      ctx.restore();
-    }
 
     return canvas;
   }
@@ -1390,6 +1463,7 @@
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
     const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
 
     // 1. 背景
     ctx.save();
@@ -1863,51 +1937,13 @@
     }
 
     // 8. Footer
-    ctx.fillStyle = LAYOUT.colors.footerBg;
-    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y + extraH, LAYOUT.footer.w, LAYOUT.footer.h);
-
-    const qrAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.qrY;
-    ctx.save();
-    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
-    if (qrImg) {
-      const qrPad = 11;
-      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
-    }
-    ctx.restore();
-
-    const tipAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.tipY;
-    drawText(ctx, '扫码查看角色详情', LAYOUT.footer.tipX, tipAbsY, {
-      font: `700 14px ${FONT_STACK.cn}`,
-      color: LAYOUT.colors.footerDark,
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看角色详情',
+      urlText: `bgm.tv/character/${data.id}`,
+      offsetY: extraH,
+      style,
     });
-    drawText(ctx, `bgm.tv/character/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
-      font: `12px ${FONT_STACK.mono}`,
-      color: LAYOUT.colors.footerText,
-    });
-
-    if (logoImg) {
-      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
-      const drawH = logoImg.naturalHeight * lr;
-      const drawY = LAYOUT.footer.y + extraH + (LAYOUT.footer.h - drawH) / 2;
-      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
-    } else {
-      ctx.save();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.font = `900 20px ${FONT_STACK.cn}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
-      ctx.fillStyle = LAYOUT.colors.accent;
-      ctx.beginPath();
-      ctx.arc(dotX, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      ctx.restore();
-    }
 
     return canvas;
   }
@@ -1932,6 +1968,7 @@
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
     const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
 
     // 1. 背景
     ctx.save();
@@ -2144,51 +2181,13 @@
     }
 
     // 8. Footer
-    ctx.fillStyle = LAYOUT.colors.footerBg;
-    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y + extraH, LAYOUT.footer.w, LAYOUT.footer.h);
-
-    const qrAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.qrY;
-    ctx.save();
-    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
-    if (qrImg) {
-      const qrPad = 11;
-      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
-    }
-    ctx.restore();
-
-    const tipAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.tipY;
-    drawText(ctx, '扫码查看人物详情', LAYOUT.footer.tipX, tipAbsY, {
-      font: `700 14px ${FONT_STACK.cn}`,
-      color: LAYOUT.colors.footerDark,
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看人物详情',
+      urlText: `bgm.tv/person/${data.id}`,
+      offsetY: extraH,
+      style,
     });
-    drawText(ctx, `bgm.tv/person/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
-      font: `12px ${FONT_STACK.mono}`,
-      color: LAYOUT.colors.footerText,
-    });
-
-    if (logoImg) {
-      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
-      const drawH = logoImg.naturalHeight * lr;
-      const drawY = LAYOUT.footer.y + extraH + (LAYOUT.footer.h - drawH) / 2;
-      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
-    } else {
-      ctx.save();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.font = `900 20px ${FONT_STACK.cn}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
-      ctx.fillStyle = LAYOUT.colors.accent;
-      ctx.beginPath();
-      ctx.arc(dotX, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2 - 8, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      ctx.restore();
-    }
 
     return canvas;
   }
@@ -2275,6 +2274,7 @@
   async function generateShareCard(opts = {}) {
     if (!isAllowedHost()) throw new Error('当前站点不在支持列表');
 
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
     const characterId = opts.id || parseCharacterId();
     const isChar = !!characterId && isCharacterPage();
     const personId = opts.id || parsePersonId();
@@ -2302,6 +2302,7 @@
 
       const canvas = await renderPersonCard(data, posterImg, qrImg, logoImg, {
         tainted: !posterImg,
+        style,
       });
 
       let blob;
@@ -2339,6 +2340,7 @@
 
       const canvas = await renderCharacterCard(data, posterImg, qrImg, logoImg, cvImgs, {
         tainted: !posterImg,
+        style,
       });
 
       let blob;
@@ -2371,6 +2373,7 @@
 
       const canvas = await renderCard(data, posterImg, qrImg, logoImg, {
         tainted: !posterImg,
+        style,
       });
 
       let blob;
