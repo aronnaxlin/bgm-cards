@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T02:51:06.789Z
+// 生成时间：2026-07-10T02:54:20.564Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -1057,7 +1057,7 @@
       metaLines.push({ key, value });
     }
 
-    // 参与作品：去重、保留职务；渲染层最多取 5 部
+    // 参与作品：去重、保留职务；渲染层最多取 3 部
     const seenWork = new Set();
     const works = [];
     for (const w of (raw.works || [])) {
@@ -2053,8 +2053,8 @@
 
     const data = preparePersonData(rawData);
 
-    // 动态面板高度：随参与作品条数增长（最多 5 部）
-    const workCount = Math.min(5, data.works.length);
+    // 动态面板高度：随参与作品条数增长（最多 3 部，避免挤占简介区域）
+    const workCount = Math.min(3, data.works.length);
     const labelH = 10;
     const labelGap = 12;
     const rowH = 28;

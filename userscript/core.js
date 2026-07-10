@@ -1029,7 +1029,7 @@
       metaLines.push({ key, value });
     }
 
-    // 参与作品：去重、保留职务；渲染层最多取 5 部
+    // 参与作品：去重、保留职务；渲染层最多取 3 部
     const seenWork = new Set();
     const works = [];
     for (const w of (raw.works || [])) {
@@ -2025,8 +2025,8 @@
 
     const data = preparePersonData(rawData);
 
-    // 动态面板高度：随参与作品条数增长（最多 5 部）
-    const workCount = Math.min(5, data.works.length);
+    // 动态面板高度：随参与作品条数增长（最多 3 部，避免挤占简介区域）
+    const workCount = Math.min(3, data.works.length);
     const labelH = 10;
     const labelGap = 12;
     const rowH = 28;
