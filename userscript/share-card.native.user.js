@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T02:54:20.562Z
+// 生成时间：2026-07-10T03:10:05.959Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -1496,25 +1496,12 @@
 
     const data = prepareCharacterData(rawData);
 
-    // Dynamic panel height — fit whichever side (CV or Works) is taller
     const workCount = Math.min(3, data.works.length);
-    const isMultiWork = workCount > 1;
     const cvCount = Math.min(3, data.cvs.length);
-    const isMultiCV = cvCount > 1;
 
-    // CV block height: label(10) + gap(8) + N×row(32) + (N-1)×rowGap(10)
-    const cvBlockH = isMultiCV
-      ? 10 + 8 + cvCount * 32 + (cvCount - 1) * 10
-      : 0;
-    // Work block height: label(10+17) + N×rowSpacing(22)
-    const workBlockH = isMultiWork
-      ? 27 + workCount * 22
-      : 0;
-    const contentH = Math.max(cvBlockH, workBlockH, 55);   // 55 = min single-row height
-    const panelPadV = 20;                                   // vertical padding inside panel
-    const ph = Math.ceil(contentH + panelPadV * 2);
     // 卡片高度固定为 subject 页高度（720），面板增高不再撑高整卡：
     // 简介紧随面板底部并按剩余空间自适应行数，footer 始终固定在卡片底部。
+    // 面板自身几何（含 ph）在「6. CV & Work Panel」处按内容计算——顶部锚定布局。
     const cardH = LAYOUT.h;
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
@@ -1639,11 +1626,44 @@
       ctx.fillText(valText, LAYOUT.meta.x + lw, y);
     });
 
-    // 6. CV & Work Panel
+    // 6. CV & Work Panel —— 顶部锚定的两列表格布局：
+    //    「声优 CV」「出演作品」两个标签固定在 py+padTop，不随内容多少移动；
+    //    内容自标签下方向下排，面板高度取两列较高者 + 对称内边距，
+    //    较矮一列自然顶对齐（表格式，稳定不漂移）。单/多 CV 共用同一套行系统。
     const px = 40;
     const py = 294;
     const pw = 420;
     const pradius = 24;
+    const padTop = 20, padBottom = 20;
+    const labelFontH = 10, labelGap = 12;
+    const dividerX = 230;                                  // 声优 / 出演作品 分界线
+    const labelY = py + padTop;                            // 两列标签共用的固定 Y
+    const contentTop = labelY + labelFontH + labelGap;     // 两列内容共用的起始 Y
+
+    // —— 左列（声优）几何：名字最多折两行，行高随折行增长
+    const avSize = cvCount > 1 ? 32 : 40;
+    const cvRowGap = 10;
+    const nameLineH = 19;                                  // 15px 名字的折行行高
+    const cvHasAvatar = !!(cvImgs && cvImgs.some(Boolean));
+    const cvX = cvHasAvatar ? 58 + avSize + 8 : 60;
+    const maxNameW = dividerX - 12 - cvX;
+    ctx.font = `700 15px ${FONT_STACK.cn}`;
+    const cvRows = [];
+    for (let i = 0; i < cvCount; i++) {
+      const lines = wrapToLines(ctx, data.cvs[i].name, maxNameW, 2);
+      cvRows.push({ lines, h: Math.max(avSize, lines.length * nameLineH) });
+    }
+    const leftH = cvRows.reduce((s, r) => s + r.h, 0) + Math.max(0, cvCount - 1) * cvRowGap;
+
+    // —— 右列（出演作品）几何：作品名 + 右对齐职务药丸，统一行高。
+    //    有声优时首行中心与声优头像中心对齐，两列首行呈同一条网格线
+    const workRowH = 26;
+    const workFirst = cvCount > 0 ? avSize / 2 : workRowH / 2; // 首行中心相对 contentTop 的偏移
+    const rightH = workCount > 0
+      ? workFirst + workRowH / 2 + (workCount - 1) * workRowH
+      : 0;
+
+    const ph = padTop + labelFontH + labelGap + Math.max(leftH, rightH, 40) + padBottom;
 
     fillRoundRect(ctx, px, py, pw, ph, pradius, LAYOUT.colors.panelBg);
     ctx.save();
@@ -1653,347 +1673,108 @@
     ctx.stroke();
     ctx.restore();
 
-    const panelCenterY = py + ph / 2;
-
-    // Pre-compute both sides' natural label tops so we can top-align them
-    const _cvNaturalLabelY = isMultiCV
-      ? panelCenterY - cvBlockH / 2                              // multi-CV block top
-      : panelCenterY - 26;                                       // single-CV: 抬高标签，与名字留出间距
-    const _wkNaturalLabelY = isMultiWork
-      ? panelCenterY - (10 + 7 + 13 + (workCount - 1) * 22) / 2 // multi-work block top
-      : panelCenterY - 26;                                       // single-work: 与声优侧标签对齐
-    // Both labels share the higher (smaller Y) of the two, giving top-alignment
-    const sharedLabelY = workCount > 0
-      ? Math.min(_cvNaturalLabelY, _wkNaturalLabelY)
-      : _cvNaturalLabelY;
-
-    if (data.cvs.length > 0) {
+    const drawColLabel = (text, x) => {
+      ctx.font = `400 ${labelFontH}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
       ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(text, x, labelY);
+    };
 
-      const avSize     = isMultiCV ? 32 : (cvImgs && cvImgs[0] ? 44 : 44);
-      const avRadius   = avSize / 2;
-      const nameIndent = 58 + avSize + 8;                // avatar left(58) + avatar + gap
-      const noAvIndent = 60;
-      const cvDividerX = 230;                            // 声优 / 出演作品 分界线
-      const cvX        = isMultiCV
-        ? (cvImgs && cvImgs.length > 0 ? nameIndent : noAvIndent)
-        : (cvImgs && cvImgs[0] ? 114 : 60);
-      // 多 CV 时名字右边界必须留在分界线左侧（含 12px 内边距），过长则截断加省略号
-      const maxNameW   = isMultiCV
-        ? cvDividerX - 12 - cvX
-        : (cvImgs && cvImgs[0] ? 106 : 160);
+    // 作品行渲染器：有 CV 时排右列（nameX=250），无 CV 时全宽复用（nameX=60）
+    const drawWorkRow = (w, nameX, cy) => {
+      const role = w.role || '出演';
+      ctx.font = `600 9px ${FONT_STACK.cn}`;
+      const rw = ctx.measureText(role).width + 12;
+      const rx = 442 - rw;                                 // 药丸右对齐
+      const rh = 15;
+      const maxWorkW = rx - nameX - 10;
 
-      if (isMultiCV) {
-        // Multiple CVs — larger avatars, exact vertical centering of whole block
-        const rowH     = avSize;       // row height = avatar height
-        const rowGap   = 10;           // gap between rows
-        const labelFontSize = 10;
-        const labelH   = labelFontSize;
-        const labelGap = 8;            // gap between label and first row
-        const fontSize = 15;
+      ctx.font = `700 13px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      let workText = w.name;
+      if (ctx.measureText(workText).width > maxWorkW) {
+        const ell = '…';
+        while (workText.length && ctx.measureText(workText + ell).width > maxWorkW) {
+          workText = workText.slice(0, -1);
+        }
+        workText += ell;
+      }
+      ctx.fillStyle = LAYOUT.colors.textMain;
+      ctx.fillText(workText, nameX, cy);
 
-        // total height of the block so we can center it
-        const totalBlockH = labelH + labelGap + cvCount * rowH + (cvCount - 1) * rowGap;
-        const blockTop    = panelCenterY - totalBlockH / 2;
+      fillRoundRect(ctx, rx, cy - rh / 2, rw, rh, 4, LAYOUT.colors.tagBg);
+      ctx.save();
+      ctx.strokeStyle = LAYOUT.colors.tagBorder;
+      ctx.lineWidth = 1;
+      roundRectPath(ctx, rx, cy - rh / 2, rw, rh, 4);
+      ctx.stroke();
+      ctx.restore();
 
-        // "声优 CV" label
-        ctx.font      = `400 ${labelFontSize}px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.textBaseline = 'top';
-        ctx.fillText('声优 CV', 58, sharedLabelY);
+      ctx.font = `600 9px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.textAlign = 'center';
+      ctx.fillText(role, rx + rw / 2, cy);
+      ctx.textAlign = 'left';
+    };
 
-        for (let i = 0; i < cvCount; i++) {
-          const cvName = data.cvs[i].name;
-          const rowTop = blockTop + labelH + labelGap + i * (rowH + rowGap);
-          const avY    = rowTop;                  // avatar top edge
-          const cvImg  = cvImgs && cvImgs[i];
+    if (cvCount > 0) {
+      drawColLabel('声优 CV', 58);
 
-          // Draw circular avatar or grey placeholder
+      let rowTop = contentTop;
+      for (let i = 0; i < cvCount; i++) {
+        const row = cvRows[i];
+        const cvImg = cvImgs && cvImgs[i];
+
+        if (cvHasAvatar) {
+          const avY = rowTop + (row.h - avSize) / 2;       // 头像在行内垂直居中
           if (cvImg) {
             ctx.save();
             ctx.beginPath();
-            ctx.arc(58 + avRadius, avY + avRadius, avRadius, 0, Math.PI * 2);
+            ctx.arc(58 + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2);
             ctx.closePath();
             ctx.clip();
             drawImageCover(ctx, cvImg, 58, avY, avSize, avSize);
             ctx.restore();
           } else {
-            fillRoundRect(ctx, 58, avY, avSize, avSize, avRadius, 'rgba(255,255,255,0.08)');
+            fillRoundRect(ctx, 58, avY, avSize, avSize, avSize / 2, 'rgba(255,255,255,0.08)');
           }
-
-          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-          ctx.textBaseline = 'middle';
-          let nameText = cvName;
-          if (ctx.measureText(nameText).width > maxNameW) {
-            const ell = '…';
-            while (nameText.length && ctx.measureText(nameText + ell).width > maxNameW) {
-              nameText = nameText.slice(0, -1);
-            }
-            nameText += ell;
-          }
-          ctx.fillStyle = LAYOUT.colors.textMain;
-          ctx.fillText(nameText, cvX, avY + avRadius);  // vertically center name with avatar
-        }
-      } else {
-        // Single CV: label and name vertically centered with large avatar (size 44x44)
-        const cvImg = cvImgs && cvImgs[0];
-        if (cvImg) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(58 + 22, panelCenterY, 22, 0, Math.PI * 2);
-          ctx.closePath();
-          ctx.clip();
-          drawImageCover(ctx, cvImg, 58, panelCenterY - 22, 44, 44);
-          ctx.restore();
         }
 
-        const cvName = data.cvs[0].name;
-        const fontSize = cvImg ? 15 : 16;
-        ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-
-        if (ctx.measureText(cvName).width <= maxNameW) {
-          // 一行放得下：保持原有布局（label 顶对齐，名字与头像垂直居中）
-          ctx.font = `400 10px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textSub;
-          ctx.textBaseline = 'top';
-          ctx.fillText('声优 CV', cvX, sharedLabelY);
-
-          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textMain;
-          ctx.textBaseline = 'middle';
-          ctx.fillText(cvName, cvX, panelCenterY - 2);
-        } else {
-          // 单 CV 名过长：换行（最多两行，不用省略号），label + 名字整体垂直居中
-          const nameLines = wrapToLines(ctx, cvName, maxNameW, 2);
-          const labelFontSize = 10;
-          const labelGap = 6;
-          const lineH = fontSize + 5;
-          const blockH = labelFontSize + labelGap + nameLines.length * lineH;
-          const blockTop = panelCenterY - blockH / 2;
-
-          ctx.font = `400 ${labelFontSize}px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textSub;
-          ctx.textBaseline = 'top';
-          ctx.fillText('声优 CV', cvX, blockTop);
-
-          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textMain;
-          ctx.textBaseline = 'middle';
-          const firstMid = blockTop + labelFontSize + labelGap + lineH / 2;
-          nameLines.forEach((ln, i) => ctx.fillText(ln, cvX, firstMid + i * lineH));
-        }
-      }
-
-      drawVDivider(ctx, 230, py + 16, ph - 32, LAYOUT.divider2.alpha, 0.25, 0.75);
-
-      if (workCount > 0) {
-        ctx.textAlign = 'left';
-
-        if (isMultiWork) {
-          const spacing    = 22;
-          // Block geometry: label(10) + gap(7) + rows occupying (N-1)*spacing + rowH
-          // Row text is textBaseline='middle'; effective row height ≈ 13px (font size)
-          const rowH       = 13;
-          const workLabelH = 10;
-          const workGap    = 7;   // gap from label bottom to first row top
-          const workBlockH = workLabelH + workGap + rowH + (workCount - 1) * spacing;
-          const workBlockTop = panelCenterY - workBlockH / 2;
-          // firstWorkY = center of first row
-          const firstWorkY = workBlockTop + workLabelH + workGap + rowH / 2;
-
-          ctx.font = `400 10px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textSub;
-          ctx.textBaseline = 'top';
-          ctx.fillText('出演作品', 250, sharedLabelY);
-
-          for (let i = 0; i < workCount; i++) {
-            const w = data.works[i];
-            const wy = firstWorkY + i * spacing;
-            
-            const role = w.role || '出演';
-            ctx.font = `600 9px ${FONT_STACK.cn}`;
-            const rw = ctx.measureText(role).width + 12;
-
-            // Right align tags at x = 442
-            const rx = 442 - rw;
-            const maxWorkW = rx - 250 - 8;
-
-            ctx.font = `700 13px ${FONT_STACK.cn}`;
-            ctx.textBaseline = 'middle';
-            let workText = w.name;
-            if (ctx.measureText(workText).width > maxWorkW) {
-              const ell = '…';
-              while (workText.length && ctx.measureText(workText + ell).width > maxWorkW) {
-                workText = workText.slice(0, -1);
-              }
-              workText += ell;
-            }
-
-            ctx.fillStyle = LAYOUT.colors.textMain;
-            ctx.fillText(workText, 250, wy);
-
-            const ry = wy - 7.5;
-            const rh = 15;
-
-            fillRoundRect(ctx, rx, ry, rw, rh, 4, LAYOUT.colors.tagBg);
-            ctx.save();
-            ctx.strokeStyle = LAYOUT.colors.tagBorder;
-            ctx.lineWidth = 1;
-            roundRectPath(ctx, rx, ry, rw, rh, 4);
-            ctx.stroke();
-            ctx.restore();
-
-            ctx.font = `600 9px ${FONT_STACK.cn}`;
-            ctx.fillStyle = LAYOUT.colors.accent;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(role, rx + rw / 2, ry + rh / 2);
-
-            ctx.textAlign = 'left';
-          }
-        } else {
-          const w = data.works[0];
-          ctx.font = `400 10px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textSub;
-          ctx.textBaseline = 'top';
-          ctx.fillText('出演作品', 250, sharedLabelY);
-
-          ctx.font = `700 13px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textMain;
-          
-          const workMaxW = 190;
-          let workText = w.name;
-          if (ctx.measureText(workText).width > workMaxW) {
-            const ell = '…';
-            while (workText.length && ctx.measureText(workText + ell).width > workMaxW) {
-              workText = workText.slice(0, -1);
-            }
-            workText += ell;
-          }
-          ctx.fillText(workText, 250, panelCenterY - 2);
-
-          const role = w.role || '出演';
-          ctx.font = `600 9px ${FONT_STACK.cn}`;
-          const rw = ctx.measureText(role).width;
-          const rx = 250;
-          const ry = panelCenterY + 18;
-          const rh = 16;
-          const rpad = 6;
-
-          fillRoundRect(ctx, rx, ry, rw + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
-          ctx.save();
-          ctx.strokeStyle = LAYOUT.colors.tagBorder;
-          ctx.lineWidth = 1;
-          roundRectPath(ctx, rx, ry, rw + rpad * 2, rh, 4);
-          ctx.stroke();
-          ctx.restore();
-
-          ctx.fillStyle = LAYOUT.colors.accent;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(role, rx + rpad + rw / 2, ry + rh / 2);
-        }
-      }
-    } else {
-      const hasWork1 = !!data.works[0];
-      const hasWork2 = !!data.works[1];
-
-      if (hasWork1) {
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.font = `400 10px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.fillText('出演作品', 60, py + 16);
-
-        ctx.font = `700 13px ${FONT_STACK.cn}`;
+        // 名字（1-2 行）在行内垂直居中
+        ctx.font = `700 15px ${FONT_STACK.cn}`;
         ctx.fillStyle = LAYOUT.colors.textMain;
-        
-        const wMaxW = 140;
-        let w1Text = data.works[0].name;
-        if (ctx.measureText(w1Text).width > wMaxW) {
-          const ell = '…';
-          while (w1Text.length && ctx.measureText(w1Text + ell).width > wMaxW) {
-            w1Text = w1Text.slice(0, -1);
-          }
-          w1Text += ell;
-        }
-        ctx.fillText(w1Text, 60, py + 33);
-
-        const r1 = data.works[0].role || '出演';
-        ctx.font = `600 9px ${FONT_STACK.cn}`;
-        const rw1 = ctx.measureText(r1).width;
-        const rx1 = 60;
-        const ry1 = py + 54;
-        const rh = 16;
-        const rpad = 6;
-
-        fillRoundRect(ctx, rx1, ry1, rw1 + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
-        ctx.save();
-        ctx.strokeStyle = LAYOUT.colors.tagBorder;
-        ctx.lineWidth = 1;
-        roundRectPath(ctx, rx1, ry1, rw1 + rpad * 2, rh, 4);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.fillStyle = LAYOUT.colors.accent;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(r1, rx1 + rpad + rw1 / 2, ry1 + rh / 2);
-      }
-
-      if (hasWork2) {
-        drawVDivider(ctx, 240, py + 16, 58, LAYOUT.divider2.alpha, 0.25, 0.75);
-
         ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.font = `400 10px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.fillText('出演作品', 260, py + 16);
-
-        ctx.font = `700 13px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textMain;
-        
-        const wMaxW = 140;
-        let w2Text = data.works[1].name;
-        if (ctx.measureText(w2Text).width > wMaxW) {
-          const ell = '…';
-          while (w2Text.length && ctx.measureText(w2Text + ell).width > wMaxW) {
-            w2Text = w2Text.slice(0, -1);
-          }
-          w2Text += ell;
-        }
-        ctx.fillText(w2Text, 260, py + 33);
-
-        const r2 = data.works[1].role || '出演';
-        ctx.font = `600 9px ${FONT_STACK.cn}`;
-        const rw2 = ctx.measureText(r2).width;
-        const rx2 = 260;
-        const ry2 = py + 54;
-        const rh = 16;
-        const rpad = 6;
-
-        fillRoundRect(ctx, rx2, ry2, rw2 + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
-        ctx.save();
-        ctx.strokeStyle = LAYOUT.colors.tagBorder;
-        ctx.lineWidth = 1;
-        roundRectPath(ctx, rx2, ry2, rw2 + rpad * 2, rh, 4);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.fillStyle = LAYOUT.colors.accent;
-        ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(r2, rx2 + rpad + rw2 / 2, ry2 + rh / 2);
-      }
+        const firstMid = rowTop + row.h / 2 - (row.lines.length - 1) * nameLineH / 2;
+        row.lines.forEach((ln, j) => ctx.fillText(ln, cvX, firstMid + j * nameLineH));
 
-      if (!hasWork1 && !hasWork2) {
-        ctx.font = `400 12px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('暂无出演作品信息', px + pw / 2, py + ph / 2);
+        rowTop += row.h + cvRowGap;
       }
     }
+
+    if (cvCount > 0 && workCount > 0) {
+      drawVDivider(ctx, dividerX, py + 16, ph - 32, LAYOUT.divider2.alpha, 0.25, 0.75);
+    }
+
+    if (workCount > 0) {
+      const workNameX = cvCount > 0 ? 250 : 60;
+      drawColLabel('出演作品', workNameX);
+      for (let i = 0; i < workCount; i++) {
+        drawWorkRow(data.works[i], workNameX, contentTop + workFirst + i * workRowH);
+      }
+    }
+
+    if (cvCount === 0 && workCount === 0) {
+      ctx.font = `400 12px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('暂无出演作品信息', px + pw / 2, py + ph / 2);
+    }
+
+
 
     // 7. 简介（紧贴面板底部；与「面板上边 → 海报」的 26px 间距对称一致）
     if (data.summary) {
