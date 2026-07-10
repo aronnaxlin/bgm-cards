@@ -17,7 +17,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T02:17:11.498Z
+// 生成时间：2026-07-10T02:32:28.394Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -1479,8 +1479,9 @@
     const contentH = Math.max(cvBlockH, workBlockH, 55);   // 55 = min single-row height
     const panelPadV = 20;                                   // vertical padding inside panel
     const ph = Math.ceil(contentH + panelPadV * 2);
-    const extraH = Math.max(0, ph - 90);                    // baseline panel is 90px
-    const cardH = LAYOUT.h + extraH;
+    // 卡片高度固定为 subject 页高度（720），面板增高不再撑高整卡：
+    // 简介紧随面板底部并按剩余空间自适应行数，footer 始终固定在卡片底部。
+    const cardH = LAYOUT.h;
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
     const tainted = opts.tainted || !posterImg;
@@ -1946,23 +1947,25 @@
       }
     }
 
-    // 7. 简介
+    // 7. 简介（紧贴面板底部；与「面板上边 → 海报」的 26px 间距对称一致）
     if (data.summary) {
-      drawText(ctx, data.summary, LAYOUT.summary.x, 404 + extraH, {
+      const summaryY = py + ph + 26;
+      const summaryMaxLines = Math.max(1, Math.min(8,
+        Math.floor((LAYOUT.footer.y - summaryY - 12) / LAYOUT.summary.lineHeight)));
+      drawText(ctx, data.summary, LAYOUT.summary.x, summaryY, {
         font: `400 ${LAYOUT.summary.size}px ${FONT_STACK.cn}`,
         color: 'rgba(245,245,247,0.70)',
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
-        maxLines: 8,
+        maxLines: summaryMaxLines,
       });
     }
 
-    // 8. Footer
+    // 8. Footer（固定在卡片底部）
     drawFooter(ctx, {
       qrImg, logoImg,
       tipText: '扫码查看角色详情',
       urlText: `bgm.tv/character/${data.id}`,
-      offsetY: extraH,
       style,
     });
 
@@ -1984,8 +1987,9 @@
     const contentH = Math.max(workCount > 0 ? labelH + labelGap + workCount * rowH : 55, 55);
     const panelPadV = 20;
     const ph = Math.ceil(contentH + panelPadV * 2);
-    const extraH = Math.max(0, ph - 90);
-    const cardH = LAYOUT.h + extraH;
+    // 卡片高度固定为 subject 页高度（720），面板增高不再撑高整卡：
+    // 简介紧随面板底部并按剩余空间自适应行数，footer 始终固定在卡片底部。
+    const cardH = LAYOUT.h;
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
     const tainted = opts.tainted || !posterImg;
@@ -2190,23 +2194,25 @@
       ctx.fillText('暂无参与作品信息', px + pw / 2, panelCenterY);
     }
 
-    // 7. 简介
+    // 7. 简介（紧贴面板底部；与「面板上边 → 海报」的 26px 间距对称一致）
     if (data.summary) {
-      drawText(ctx, data.summary, LAYOUT.summary.x, 404 + extraH, {
+      const summaryY = py + ph + 26;
+      const summaryMaxLines = Math.max(1, Math.min(8,
+        Math.floor((LAYOUT.footer.y - summaryY - 12) / LAYOUT.summary.lineHeight)));
+      drawText(ctx, data.summary, LAYOUT.summary.x, summaryY, {
         font: `400 ${LAYOUT.summary.size}px ${FONT_STACK.cn}`,
         color: 'rgba(245,245,247,0.70)',
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
-        maxLines: 8,
+        maxLines: summaryMaxLines,
       });
     }
 
-    // 8. Footer
+    // 8. Footer（固定在卡片底部）
     drawFooter(ctx, {
       qrImg, logoImg,
       tipText: '扫码查看人物详情',
       urlText: `bgm.tv/person/${data.id}`,
-      offsetY: extraH,
       style,
     });
 
