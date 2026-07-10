@@ -17,7 +17,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T02:42:15.766Z
+// 生成时间：2026-07-10T02:47:51.146Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -808,6 +808,35 @@
 
     ctx.fillText(text, x, y);
     ctx.restore();
+  }
+
+  // 把一段文本按宽度折成至多 maxLines 行：优先在空格处断行（适配英文名），
+  // 仅当最后一行仍放不下时才在末行加省略号。用 ctx 当前字体测量。
+  function wrapToLines(ctx, text, maxWidth, maxLines) {
+    const lines = [];
+    let remaining = String(text).trim();
+    while (remaining.length && lines.length < maxLines) {
+      let len = remaining.length;
+      while (len > 0 && ctx.measureText(remaining.slice(0, len)).width > maxWidth) len--;
+      if (len === 0) len = 1;
+      const isLast = lines.length === maxLines - 1;
+      if (len < remaining.length && !isLast) {
+        const sp = remaining.slice(0, len).lastIndexOf(' ');
+        if (sp > 0 && sp >= len - 12) len = sp;   // 断点附近有空格则改在空格处断
+      }
+      let line = remaining.slice(0, len);
+      let rest = remaining.slice(len).replace(/^\s+/, '');
+      if (isLast && rest.length) {                 // 末行仍有剩余才截断加省略号
+        const ell = '…';
+        let t = line;
+        while (t.length && ctx.measureText(t + ell).width > maxWidth) t = t.slice(0, -1);
+        line = t + ell;
+        rest = '';
+      }
+      lines.push(line.trim());
+      remaining = rest;
+    }
+    return lines;
   }
 
   function measureTextHeight(ctx, text, maxWidth, lineHeight, maxLines) {
@@ -1736,28 +1765,41 @@
           ctx.restore();
         }
 
-        ctx.font = `400 10px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.textBaseline = 'top';
-        ctx.fillText('声优 CV', cvX, sharedLabelY);
-
         const cvName = data.cvs[0].name;
-        let fontSize = cvImg ? 15 : 16;
+        const fontSize = cvImg ? 15 : 16;
         ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-        let nameText = cvName;
-        while (fontSize > 10 && ctx.measureText(nameText).width > maxNameW) {
-          fontSize--;
+
+        if (ctx.measureText(cvName).width <= maxNameW) {
+          // 一行放得下：保持原有布局（label 顶对齐，名字与头像垂直居中）
+          ctx.font = `400 10px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textSub;
+          ctx.textBaseline = 'top';
+          ctx.fillText('声优 CV', cvX, sharedLabelY);
+
           ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textMain;
+          ctx.textBaseline = 'middle';
+          ctx.fillText(cvName, cvX, panelCenterY - 2);
+        } else {
+          // 单 CV 名过长：换行（最多两行，不用省略号），label + 名字整体垂直居中
+          const nameLines = wrapToLines(ctx, cvName, maxNameW, 2);
+          const labelFontSize = 10;
+          const labelGap = 6;
+          const lineH = fontSize + 5;
+          const blockH = labelFontSize + labelGap + nameLines.length * lineH;
+          const blockTop = panelCenterY - blockH / 2;
+
+          ctx.font = `400 ${labelFontSize}px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textSub;
+          ctx.textBaseline = 'top';
+          ctx.fillText('声优 CV', cvX, blockTop);
+
+          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
+          ctx.fillStyle = LAYOUT.colors.textMain;
+          ctx.textBaseline = 'middle';
+          const firstMid = blockTop + labelFontSize + labelGap + lineH / 2;
+          nameLines.forEach((ln, i) => ctx.fillText(ln, cvX, firstMid + i * lineH));
         }
-        if (ctx.measureText(nameText).width > maxNameW) {
-          const ell = '…';
-          while (nameText.length && ctx.measureText(nameText + ell).width > maxNameW) {
-            nameText = nameText.slice(0, -1);
-          }
-          nameText += ell;
-        }
-        ctx.fillStyle = LAYOUT.colors.textMain;
-        ctx.fillText(nameText, cvX, panelCenterY - 2);
       }
 
       drawVDivider(ctx, 230, py + 16, ph - 32, LAYOUT.divider2.alpha, 0.25, 0.75);
