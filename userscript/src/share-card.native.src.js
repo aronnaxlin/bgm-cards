@@ -7,6 +7,52 @@
 function createUI(core) {
   const ns = 'bgm-share-card';
 
+  // 卡片风格：'classic'(经典白块) | 'immersive'(沉浸 / 无白块深色)。
+  // 存于 cookie，任意脚本环境通用；预览弹窗内即可切换、生成时读取。
+  const STYLE_COOKIE = 'bgm_share_card_style';
+  const STYLE_OPTS = [
+    { value: 'classic', label: '经典' },
+    { value: 'immersive', label: '沉浸' },
+  ];
+  function getStyleValue() {
+    const m = document.cookie.match(/(?:^|;\s*)bgm_share_card_style=([^;]+)/);
+    return m && decodeURIComponent(m[1]) === 'immersive' ? 'immersive' : 'classic';
+  }
+  function setStyleValue(v) {
+    const exp = new Date(Date.now() + 365 * 864e5).toUTCString();
+    document.cookie = `${STYLE_COOKIE}=${encodeURIComponent(v)}; expires=${exp}; path=/`;
+  }
+
+  // 若页面存在超合金 chiiLib（bgm.tv 页面全局，三版脚本都能用），
+  // 新建一个「分享卡片」专属面板 Tab 放风格选项；无 chiiLib 时静默跳过。
+  function registerConfig() {
+    try {
+      const uka = window.chiiLib && window.chiiLib.ukagaka;
+      if (!uka || typeof uka.addPanelTab !== 'function') return;
+      uka.addPanelTab({
+        tab: 'bgm_share_card',
+        label: '分享卡片',
+        type: 'options',
+        config: [
+          {
+            title: '卡片风格',
+            name: 'bgmShareCardStyle',
+            type: 'radio',
+            defaultValue: 'classic',
+            getCurrentValue: getStyleValue,
+            onChange: setStyleValue,
+            options: [
+              { value: 'classic', label: '经典' },
+              { value: 'immersive', label: '沉浸' },
+            ],
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn('[bgm-share-card] 注册面板 Tab 失败', e && e.message);
+    }
+  }
+
   function ensureStyles() {
     if (document.getElementById(`${ns}-styles`)) return;
     const style = document.createElement('style');
@@ -94,6 +140,20 @@ function createUI(core) {
       .${ns}-btn:hover { transform: translateY(-1px); }
       .${ns}-btn-primary { background: #F09199; color: #1a1a1a; }
       .${ns}-btn-secondary { background: rgba(255,255,255,0.10); color: #f5f5f7; }
+      .${ns}-styletabs { display: flex; justify-content: center; gap: 6px; }
+      .${ns}-styletab {
+        padding: 6px 16px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.06);
+        color: #a0a0b0;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background .15s, color .15s;
+      }
+      .${ns}-styletab:hover { color: #f5f5f7; }
+      .${ns}-styletab.active { background: #F09199; color: #1a1a1a; border-color: transparent; }
       .${ns}-close {
         position: absolute;
         top: 16px;
@@ -175,10 +235,20 @@ function createUI(core) {
     const modal = document.createElement('div');
     modal.className = `${ns}-modal`;
 
+    const tabs = document.createElement('div');
+    tabs.className = `${ns}-styletabs`;
+    const tabBtns = {};
+    STYLE_OPTS.forEach(opt => {
+      const b = document.createElement('button');
+      b.className = `${ns}-styletab`;
+      b.textContent = opt.label;
+      tabBtns[opt.value] = b;
+      tabs.appendChild(b);
+    });
+
     const preview = document.createElement('div');
     preview.className = `${ns}-preview`;
     const img = document.createElement('img');
-    img.src = canvas.toDataURL('image/png');
     img.alt = '分享卡片预览';
     preview.appendChild(img);
 
@@ -203,6 +273,7 @@ function createUI(core) {
     if (!ios) actions.appendChild(copyBtn);
 
     modal.appendChild(closeBtn);
+    modal.appendChild(tabs);
     modal.appendChild(preview);
     if (ios) {
       const hint = document.createElement('p');
@@ -215,7 +286,37 @@ function createUI(core) {
     document.body.appendChild(overlay);
 
     let blob = null;
-    core.exportPNG(canvas).catch(() => core.exportPNGFallback(canvas)).then(b => { blob = b; });
+    let busy = false;
+
+    function setActiveTab(style) {
+      STYLE_OPTS.forEach(o => tabBtns[o.value].classList.toggle('active', o.value === style));
+    }
+    function applyCanvas(cv) {
+      img.src = cv.toDataURL('image/png');
+      blob = null;
+      core.exportPNG(cv).catch(() => core.exportPNGFallback(cv)).then(b => { blob = b; });
+    }
+    setActiveTab(getStyleValue());
+    applyCanvas(canvas);
+
+    STYLE_OPTS.forEach(opt => {
+      tabBtns[opt.value].addEventListener('click', async () => {
+        if (busy || getStyleValue() === opt.value) return;
+        busy = true;
+        setStyleValue(opt.value);
+        setActiveTab(opt.value);
+        setLoading(true);
+        try {
+          const res = await core.generateShareCard({ style: opt.value });
+          applyCanvas(res.canvas);
+        } catch (e) {
+          toast('切换失败：' + e.message);
+        } finally {
+          setLoading(false);
+          busy = false;
+        }
+      });
+    });
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
@@ -246,7 +347,7 @@ function createUI(core) {
   async function runGenerate() {
     setLoading(true);
     try {
-      const { canvas } = await core.generateShareCard();
+      const { canvas } = await core.generateShareCard({ style: getStyleValue() });
       showPreview(canvas);
     } catch (err) {
       showError(err.message);
@@ -318,6 +419,7 @@ function createUI(core) {
   return {
     init() {
       ensureStyles();
+      registerConfig();
       if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) injectButton();
     },
     showPreview,

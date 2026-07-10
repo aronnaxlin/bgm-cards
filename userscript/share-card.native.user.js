@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-09T16:04:13.858Z
+// 生成时间：2026-07-10T03:10:05.959Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -705,6 +705,25 @@
     ctx.restore();
   }
 
+  // 中文标点避头尾（禁则处理）：
+  // NO_LINE_START —— 不允许出现在行首的标点（收尾类，如句号、逗号、右括号）；
+  // NO_LINE_END   —— 不允许出现在行末的标点（起头类，如左括号、开引号）。
+  const NO_LINE_START = '，。、；：！？）】」』〉》〕｝］,.!?;:)]}…·—’”';
+  const NO_LINE_END = '（【「『〈《〔｛［([{“‘';
+
+  // 给定「按宽度贪心切出的字符数 len」，按避头尾规则微调：
+  // 1) 行末若是起头类标点，则把它挪到下一行（len--）；
+  // 2) 行首（下一行开头）若是收尾类标点，则悬挂到当前行末（len++，最多挂 2 个）。
+  function applyKinsoku(str, len) {
+    if (len > 1 && NO_LINE_END.includes(str[len - 1])) len--;
+    let hang = 0;
+    while (len < str.length && hang < 2 && NO_LINE_START.includes(str[len])) {
+      len++;
+      hang++;
+    }
+    return len;
+  }
+
   function drawText(ctx, text, x, y, opts = {}) {
     const {
       font = `12px ${FONT_STACK.cn}`,
@@ -714,6 +733,7 @@
       maxLines = 1,
       align = 'left',
       baseline = 'top',
+      kinsoku = false,
     } = opts;
     ctx.save();
     ctx.font = font;
@@ -749,6 +769,8 @@
           let len = remaining.length;
           while (len > 0 && ctx.measureText(remaining.slice(0, len)).width > maxWidth) len--;
           if (len === 0) len = 1;
+          // 未到段落末尾时套用避头尾规则，避免标点落在行首 / 行末
+          if (kinsoku && len < remaining.length) len = applyKinsoku(remaining, len);
           let line = remaining.slice(0, len);
           remaining = remaining.slice(len).replace(/^\s+/, '');
           const hasMore = remaining.length > 0 || p < paragraphs.length - 1;
@@ -768,6 +790,35 @@
 
     ctx.fillText(text, x, y);
     ctx.restore();
+  }
+
+  // 把一段文本按宽度折成至多 maxLines 行：优先在空格处断行（适配英文名），
+  // 仅当最后一行仍放不下时才在末行加省略号。用 ctx 当前字体测量。
+  function wrapToLines(ctx, text, maxWidth, maxLines) {
+    const lines = [];
+    let remaining = String(text).trim();
+    while (remaining.length && lines.length < maxLines) {
+      let len = remaining.length;
+      while (len > 0 && ctx.measureText(remaining.slice(0, len)).width > maxWidth) len--;
+      if (len === 0) len = 1;
+      const isLast = lines.length === maxLines - 1;
+      if (len < remaining.length && !isLast) {
+        const sp = remaining.slice(0, len).lastIndexOf(' ');
+        if (sp > 0 && sp >= len - 12) len = sp;   // 断点附近有空格则改在空格处断
+      }
+      let line = remaining.slice(0, len);
+      let rest = remaining.slice(len).replace(/^\s+/, '');
+      if (isLast && rest.length) {                 // 末行仍有剩余才截断加省略号
+        const ell = '…';
+        let t = line;
+        while (t.length && ctx.measureText(t + ell).width > maxWidth) t = t.slice(0, -1);
+        line = t + ell;
+        rest = '';
+      }
+      lines.push(line.trim());
+      remaining = rest;
+    }
+    return lines;
   }
 
   function measureTextHeight(ctx, text, maxWidth, lineHeight, maxLines) {
@@ -981,7 +1032,7 @@
       metaLines.push({ key, value });
     }
 
-    // 参与作品：去重、保留职务；渲染层最多取 5 部
+    // 参与作品：去重、保留职务；渲染层最多取 3 部
     const seenWork = new Set();
     const works = [];
     for (const w of (raw.works || [])) {
@@ -1001,12 +1052,128 @@
     };
   }
 
+  // 二维码重上色：把「黑码 / 白底」重绘为「浅色码 / 透明底」，用于沉浸(深色)风格。
+  // 以灰度反相作为 alpha：越暗（码）越不透明，越亮（底）越透明，从而抠掉白底。
+  function recolorQRLight(img, rgb) {
+    const size = img.naturalWidth || 240;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0, size, size);
+    let imgData;
+    try {
+      imgData = x.getImageData(0, 0, size, size);
+    } catch (_) {
+      return img; // 被跨域污染无法读像素时回退原图，避免整卡报错
+    }
+    const d = imgData.data;
+    const [r, g, b] = rgb;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255 - lum;
+    }
+    x.putImageData(imgData, 0, 0);
+    return c;
+  }
+
+  // 把带透明通道的图（如深色 logo）整体染成单色，保留原始 alpha 边缘。
+  function tintImageToColor(img, color) {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0);
+    x.globalCompositeOperation = 'source-in';
+    x.fillStyle = color;
+    x.fillRect(0, 0, w, h);
+    return c;
+  }
+
+  // 统一页脚绘制。style: 'classic'(白底色块) | 'immersive'(取消白块 / 深色沉浸)。
+  // 三种卡片(条目 / 角色 / 人物)共用；offsetY 用于角色/人物卡的动态高度增量。
+  function drawFooter(ctx, opts) {
+    const { qrImg, logoImg, tipText, urlText, offsetY = 0, style = 'classic' } = opts;
+    const F = LAYOUT.footer;
+    const immersive = style === 'immersive';
+    const top = F.y + offsetY;
+
+    const headColor = immersive ? LAYOUT.colors.textMain : LAYOUT.colors.footerDark;
+    const subColor = immersive ? 'rgba(245,245,247,0.62)' : LAYOUT.colors.footerText;
+
+    if (immersive) {
+      // 不画白块——沿用上方统一背景；顶部加一条渐隐分隔线弱化与主体的拼接感
+      ctx.save();
+      const line = ctx.createLinearGradient(F.x, 0, F.x + F.w, 0);
+      line.addColorStop(0, 'rgba(255,255,255,0)');
+      line.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+      line.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = line;
+      ctx.fillRect(F.x + 32, top, F.w - 64, 1);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = LAYOUT.colors.footerBg;
+      ctx.fillRect(F.x, top, F.w, F.h);
+    }
+
+    // QR（qrY/tipY 为相对 footer 顶部的偏移，必须叠加 top）
+    const qrAbsY = top + F.qrY;
+    ctx.save();
+    clipRoundRect(ctx, F.qrX, qrAbsY, F.qrSize, F.qrSize, F.qrRadius);
+    if (!immersive) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(F.qrX, qrAbsY, F.qrSize, F.qrSize);
+    }
+    if (qrImg) {
+      const drawQr = immersive ? recolorQRLight(qrImg, [245, 245, 247]) : qrImg;
+      // 白色圆角底不变，二维码本身留更大内边距，方形码与圆角底更协调
+      const qrPad = 11;
+      ctx.drawImage(drawQr, F.qrX + qrPad, qrAbsY + qrPad, F.qrSize - qrPad * 2, F.qrSize - qrPad * 2);
+    }
+    ctx.restore();
+
+    // QR 提示文字
+    const tipAbsY = top + F.tipY;
+    drawText(ctx, tipText, F.tipX, tipAbsY, {
+      font: `700 14px ${FONT_STACK.cn}`,
+      color: headColor,
+    });
+    drawText(ctx, urlText, F.tipX, tipAbsY + 20, {
+      font: `12px ${FONT_STACK.mono}`,
+      color: subColor,
+    });
+
+    // Logo（沉浸风格把深色 logo 染成浅色以适配深底）
+    const logo = (immersive && logoImg) ? tintImageToColor(logoImg, headColor) : logoImg;
+    if (logo) {
+      const lr = F.logoW / logoImg.naturalWidth;
+      const drawH = logoImg.naturalHeight * lr;
+      const drawY = top + (F.h - drawH) / 2;
+      ctx.drawImage(logo, F.logoX, drawY, F.logoW, drawH);
+    } else {
+      ctx.save();
+      ctx.fillStyle = headColor;
+      ctx.font = `900 20px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      const midY = top + F.h / 2;
+      ctx.fillText('bangumi', F.logoX + F.logoW - 18, midY);
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.beginPath();
+      ctx.arc(F.logoX + F.logoW - 16, midY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = headColor;
+      ctx.fillText('.tv', F.logoX + F.logoW, midY);
+      ctx.restore();
+    }
+  }
+
   async function renderCard(rawData, posterImg, qrImg, logoImg, opts = {}) {
     await document.fonts.ready;
 
     const data = prepareData(rawData);
     const { canvas, ctx } = createCanvas();
     const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
 
     // 1. 背景
     ctx.save();
@@ -1309,59 +1476,17 @@
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
         maxLines: LAYOUT.summary.maxLines,
+        kinsoku: true,
       });
     }
 
     // 10. Footer
-    ctx.fillStyle = LAYOUT.colors.footerBg;
-    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y, LAYOUT.footer.w, LAYOUT.footer.h);
-
-    // QR（qrY/tipY 为相对 footer 顶部的偏移，必须叠加 footer.y）
-    const qrAbsY = LAYOUT.footer.y + LAYOUT.footer.qrY;
-    ctx.save();
-    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
-    if (qrImg) {
-      // 白色圆角底不变，二维码本身留更大内边距，方形码与圆角底更协调
-      const qrPad = 11;
-      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
-    }
-    ctx.restore();
-
-    // QR 提示文字
-    const tipAbsY = LAYOUT.footer.y + LAYOUT.footer.tipY;
-    drawText(ctx, '扫码查看条目', LAYOUT.footer.tipX, tipAbsY, {
-      font: `700 14px ${FONT_STACK.cn}`,
-      color: LAYOUT.colors.footerDark,
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看条目',
+      urlText: `bgm.tv/subject/${data.id}`,
+      style,
     });
-    drawText(ctx, `bgm.tv/subject/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
-      font: `12px ${FONT_STACK.mono}`,
-      color: LAYOUT.colors.footerText,
-    });
-
-    // Logo
-    if (logoImg) {
-      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
-      const drawH = logoImg.naturalHeight * lr;
-      const drawY = LAYOUT.footer.y + (LAYOUT.footer.h - drawH) / 2;
-      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
-    } else {
-      ctx.save();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.font = `900 20px ${FONT_STACK.cn}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + LAYOUT.footer.h / 2);
-      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
-      ctx.fillStyle = LAYOUT.colors.accent;
-      ctx.beginPath();
-      ctx.arc(dotX, LAYOUT.footer.y + LAYOUT.footer.h / 2, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + LAYOUT.footer.h / 2);
-      ctx.restore();
-    }
 
     return canvas;
   }
@@ -1371,28 +1496,17 @@
 
     const data = prepareCharacterData(rawData);
 
-    // Dynamic panel height — fit whichever side (CV or Works) is taller
     const workCount = Math.min(3, data.works.length);
-    const isMultiWork = workCount > 1;
     const cvCount = Math.min(3, data.cvs.length);
-    const isMultiCV = cvCount > 1;
 
-    // CV block height: label(10) + gap(8) + N×row(32) + (N-1)×rowGap(10)
-    const cvBlockH = isMultiCV
-      ? 10 + 8 + cvCount * 32 + (cvCount - 1) * 10
-      : 0;
-    // Work block height: label(10+17) + N×rowSpacing(22)
-    const workBlockH = isMultiWork
-      ? 27 + workCount * 22
-      : 0;
-    const contentH = Math.max(cvBlockH, workBlockH, 55);   // 55 = min single-row height
-    const panelPadV = 20;                                   // vertical padding inside panel
-    const ph = Math.ceil(contentH + panelPadV * 2);
-    const extraH = Math.max(0, ph - 90);                    // baseline panel is 90px
-    const cardH = LAYOUT.h + extraH;
+    // 卡片高度固定为 subject 页高度（720），面板增高不再撑高整卡：
+    // 简介紧随面板底部并按剩余空间自适应行数，footer 始终固定在卡片底部。
+    // 面板自身几何（含 ph）在「6. CV & Work Panel」处按内容计算——顶部锚定布局。
+    const cardH = LAYOUT.h;
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
     const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
 
     // 1. 背景
     ctx.save();
@@ -1512,11 +1626,44 @@
       ctx.fillText(valText, LAYOUT.meta.x + lw, y);
     });
 
-    // 6. CV & Work Panel
+    // 6. CV & Work Panel —— 顶部锚定的两列表格布局：
+    //    「声优 CV」「出演作品」两个标签固定在 py+padTop，不随内容多少移动；
+    //    内容自标签下方向下排，面板高度取两列较高者 + 对称内边距，
+    //    较矮一列自然顶对齐（表格式，稳定不漂移）。单/多 CV 共用同一套行系统。
     const px = 40;
     const py = 294;
     const pw = 420;
     const pradius = 24;
+    const padTop = 20, padBottom = 20;
+    const labelFontH = 10, labelGap = 12;
+    const dividerX = 230;                                  // 声优 / 出演作品 分界线
+    const labelY = py + padTop;                            // 两列标签共用的固定 Y
+    const contentTop = labelY + labelFontH + labelGap;     // 两列内容共用的起始 Y
+
+    // —— 左列（声优）几何：名字最多折两行，行高随折行增长
+    const avSize = cvCount > 1 ? 32 : 40;
+    const cvRowGap = 10;
+    const nameLineH = 19;                                  // 15px 名字的折行行高
+    const cvHasAvatar = !!(cvImgs && cvImgs.some(Boolean));
+    const cvX = cvHasAvatar ? 58 + avSize + 8 : 60;
+    const maxNameW = dividerX - 12 - cvX;
+    ctx.font = `700 15px ${FONT_STACK.cn}`;
+    const cvRows = [];
+    for (let i = 0; i < cvCount; i++) {
+      const lines = wrapToLines(ctx, data.cvs[i].name, maxNameW, 2);
+      cvRows.push({ lines, h: Math.max(avSize, lines.length * nameLineH) });
+    }
+    const leftH = cvRows.reduce((s, r) => s + r.h, 0) + Math.max(0, cvCount - 1) * cvRowGap;
+
+    // —— 右列（出演作品）几何：作品名 + 右对齐职务药丸，统一行高。
+    //    有声优时首行中心与声优头像中心对齐，两列首行呈同一条网格线
+    const workRowH = 26;
+    const workFirst = cvCount > 0 ? avSize / 2 : workRowH / 2; // 首行中心相对 contentTop 的偏移
+    const rightH = workCount > 0
+      ? workFirst + workRowH / 2 + (workCount - 1) * workRowH
+      : 0;
+
+    const ph = padTop + labelFontH + labelGap + Math.max(leftH, rightH, 40) + padBottom;
 
     fillRoundRect(ctx, px, py, pw, ph, pradius, LAYOUT.colors.panelBg);
     ctx.save();
@@ -1526,391 +1673,131 @@
     ctx.stroke();
     ctx.restore();
 
-    const panelCenterY = py + ph / 2;
-
-    // Pre-compute both sides' natural label tops so we can top-align them
-    const _cvNaturalLabelY = isMultiCV
-      ? panelCenterY - cvBlockH / 2                              // multi-CV block top
-      : panelCenterY - 19;                                       // single-CV legacy offset
-    const _wkNaturalLabelY = isMultiWork
-      ? panelCenterY - (10 + 7 + 13 + (workCount - 1) * 22) / 2 // multi-work block top
-      : panelCenterY - 19;                                       // single-work legacy offset
-    // Both labels share the higher (smaller Y) of the two, giving top-alignment
-    const sharedLabelY = workCount > 0
-      ? Math.min(_cvNaturalLabelY, _wkNaturalLabelY)
-      : _cvNaturalLabelY;
-
-    if (data.cvs.length > 0) {
+    const drawColLabel = (text, x) => {
+      ctx.font = `400 ${labelFontH}px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
       ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(text, x, labelY);
+    };
 
-      const avSize     = isMultiCV ? 32 : (cvImgs && cvImgs[0] ? 44 : 44);
-      const avRadius   = avSize / 2;
-      const nameIndent = 58 + avSize + 8;                // avatar left(58) + avatar + gap
-      const noAvIndent = 60;
-      const maxNameW   = isMultiCV
-        ? (cvImgs && cvImgs.length > 0 ? 220 - avSize : 148)
-        : (cvImgs && cvImgs[0] ? 106 : 160);
-      const cvX        = isMultiCV
-        ? (cvImgs && cvImgs.length > 0 ? nameIndent : noAvIndent)
-        : (cvImgs && cvImgs[0] ? 114 : 60);
+    // 作品行渲染器：有 CV 时排右列（nameX=250），无 CV 时全宽复用（nameX=60）
+    const drawWorkRow = (w, nameX, cy) => {
+      const role = w.role || '出演';
+      ctx.font = `600 9px ${FONT_STACK.cn}`;
+      const rw = ctx.measureText(role).width + 12;
+      const rx = 442 - rw;                                 // 药丸右对齐
+      const rh = 15;
+      const maxWorkW = rx - nameX - 10;
 
-      if (isMultiCV) {
-        // Multiple CVs — larger avatars, exact vertical centering of whole block
-        const rowH     = avSize;       // row height = avatar height
-        const rowGap   = 10;           // gap between rows
-        const labelFontSize = 10;
-        const labelH   = labelFontSize;
-        const labelGap = 8;            // gap between label and first row
-        const fontSize = 15;
+      ctx.font = `700 13px ${FONT_STACK.cn}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      let workText = w.name;
+      if (ctx.measureText(workText).width > maxWorkW) {
+        const ell = '…';
+        while (workText.length && ctx.measureText(workText + ell).width > maxWorkW) {
+          workText = workText.slice(0, -1);
+        }
+        workText += ell;
+      }
+      ctx.fillStyle = LAYOUT.colors.textMain;
+      ctx.fillText(workText, nameX, cy);
 
-        // total height of the block so we can center it
-        const totalBlockH = labelH + labelGap + cvCount * rowH + (cvCount - 1) * rowGap;
-        const blockTop    = panelCenterY - totalBlockH / 2;
+      fillRoundRect(ctx, rx, cy - rh / 2, rw, rh, 4, LAYOUT.colors.tagBg);
+      ctx.save();
+      ctx.strokeStyle = LAYOUT.colors.tagBorder;
+      ctx.lineWidth = 1;
+      roundRectPath(ctx, rx, cy - rh / 2, rw, rh, 4);
+      ctx.stroke();
+      ctx.restore();
 
-        // "声优 CV" label
-        ctx.font      = `400 ${labelFontSize}px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.textBaseline = 'top';
-        ctx.fillText('声优 CV', 58, sharedLabelY);
+      ctx.font = `600 9px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.textAlign = 'center';
+      ctx.fillText(role, rx + rw / 2, cy);
+      ctx.textAlign = 'left';
+    };
 
-        for (let i = 0; i < cvCount; i++) {
-          const cvName = data.cvs[i].name;
-          const rowTop = blockTop + labelH + labelGap + i * (rowH + rowGap);
-          const avY    = rowTop;                  // avatar top edge
-          const cvImg  = cvImgs && cvImgs[i];
+    if (cvCount > 0) {
+      drawColLabel('声优 CV', 58);
 
-          // Draw circular avatar or grey placeholder
+      let rowTop = contentTop;
+      for (let i = 0; i < cvCount; i++) {
+        const row = cvRows[i];
+        const cvImg = cvImgs && cvImgs[i];
+
+        if (cvHasAvatar) {
+          const avY = rowTop + (row.h - avSize) / 2;       // 头像在行内垂直居中
           if (cvImg) {
             ctx.save();
             ctx.beginPath();
-            ctx.arc(58 + avRadius, avY + avRadius, avRadius, 0, Math.PI * 2);
+            ctx.arc(58 + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2);
             ctx.closePath();
             ctx.clip();
             drawImageCover(ctx, cvImg, 58, avY, avSize, avSize);
             ctx.restore();
           } else {
-            fillRoundRect(ctx, 58, avY, avSize, avSize, avRadius, 'rgba(255,255,255,0.08)');
+            fillRoundRect(ctx, 58, avY, avSize, avSize, avSize / 2, 'rgba(255,255,255,0.08)');
           }
-
-          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-          ctx.textBaseline = 'middle';
-          let nameText = cvName;
-          const curMaxNameW = cvImg ? maxNameW : 148;
-          if (ctx.measureText(nameText).width > curMaxNameW) {
-            const ell = '…';
-            while (nameText.length && ctx.measureText(nameText + ell).width > curMaxNameW) {
-              nameText = nameText.slice(0, -1);
-            }
-            nameText += ell;
-          }
-          ctx.fillStyle = LAYOUT.colors.textMain;
-          ctx.fillText(nameText, cvX, avY + avRadius);  // vertically center name with avatar
-        }
-      } else {
-        // Single CV: label and name vertically centered with large avatar (size 44x44)
-        const cvImg = cvImgs && cvImgs[0];
-        if (cvImg) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(58 + 22, panelCenterY, 22, 0, Math.PI * 2);
-          ctx.closePath();
-          ctx.clip();
-          drawImageCover(ctx, cvImg, 58, panelCenterY - 22, 44, 44);
-          ctx.restore();
         }
 
-        ctx.font = `400 10px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.textBaseline = 'top';
-        ctx.fillText('声优 CV', cvX, sharedLabelY);
-
-        const cvName = data.cvs[0].name;
-        let fontSize = cvImg ? 15 : 16;
-        ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-        let nameText = cvName;
-        while (fontSize > 10 && ctx.measureText(nameText).width > maxNameW) {
-          fontSize--;
-          ctx.font = `700 ${fontSize}px ${FONT_STACK.cn}`;
-        }
-        if (ctx.measureText(nameText).width > maxNameW) {
-          const ell = '…';
-          while (nameText.length && ctx.measureText(nameText + ell).width > maxNameW) {
-            nameText = nameText.slice(0, -1);
-          }
-          nameText += ell;
-        }
+        // 名字（1-2 行）在行内垂直居中
+        ctx.font = `700 15px ${FONT_STACK.cn}`;
         ctx.fillStyle = LAYOUT.colors.textMain;
-        ctx.fillText(nameText, cvX, panelCenterY - 2);
-      }
-
-      drawVDivider(ctx, 230, py + 16, ph - 32, LAYOUT.divider2.alpha, 0.25, 0.75);
-
-      if (workCount > 0) {
         ctx.textAlign = 'left';
-
-        if (isMultiWork) {
-          const spacing    = 22;
-          // Block geometry: label(10) + gap(7) + rows occupying (N-1)*spacing + rowH
-          // Row text is textBaseline='middle'; effective row height ≈ 13px (font size)
-          const rowH       = 13;
-          const workLabelH = 10;
-          const workGap    = 7;   // gap from label bottom to first row top
-          const workBlockH = workLabelH + workGap + rowH + (workCount - 1) * spacing;
-          const workBlockTop = panelCenterY - workBlockH / 2;
-          // firstWorkY = center of first row
-          const firstWorkY = workBlockTop + workLabelH + workGap + rowH / 2;
-
-          ctx.font = `400 10px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textSub;
-          ctx.textBaseline = 'top';
-          ctx.fillText('出演作品', 250, sharedLabelY);
-
-          for (let i = 0; i < workCount; i++) {
-            const w = data.works[i];
-            const wy = firstWorkY + i * spacing;
-            
-            const role = w.role || '出演';
-            ctx.font = `600 9px ${FONT_STACK.cn}`;
-            const rw = ctx.measureText(role).width + 12;
-
-            // Right align tags at x = 442
-            const rx = 442 - rw;
-            const maxWorkW = rx - 250 - 8;
-
-            ctx.font = `700 13px ${FONT_STACK.cn}`;
-            ctx.textBaseline = 'middle';
-            let workText = w.name;
-            if (ctx.measureText(workText).width > maxWorkW) {
-              const ell = '…';
-              while (workText.length && ctx.measureText(workText + ell).width > maxWorkW) {
-                workText = workText.slice(0, -1);
-              }
-              workText += ell;
-            }
-
-            ctx.fillStyle = LAYOUT.colors.textMain;
-            ctx.fillText(workText, 250, wy);
-
-            const ry = wy - 7.5;
-            const rh = 15;
-
-            fillRoundRect(ctx, rx, ry, rw, rh, 4, LAYOUT.colors.tagBg);
-            ctx.save();
-            ctx.strokeStyle = LAYOUT.colors.tagBorder;
-            ctx.lineWidth = 1;
-            roundRectPath(ctx, rx, ry, rw, rh, 4);
-            ctx.stroke();
-            ctx.restore();
-
-            ctx.font = `600 9px ${FONT_STACK.cn}`;
-            ctx.fillStyle = LAYOUT.colors.accent;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(role, rx + rw / 2, ry + rh / 2);
-
-            ctx.textAlign = 'left';
-          }
-        } else {
-          const w = data.works[0];
-          ctx.font = `400 10px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textSub;
-          ctx.textBaseline = 'top';
-          ctx.fillText('出演作品', 250, sharedLabelY);
-
-          ctx.font = `700 13px ${FONT_STACK.cn}`;
-          ctx.fillStyle = LAYOUT.colors.textMain;
-          
-          const workMaxW = 190;
-          let workText = w.name;
-          if (ctx.measureText(workText).width > workMaxW) {
-            const ell = '…';
-            while (workText.length && ctx.measureText(workText + ell).width > workMaxW) {
-              workText = workText.slice(0, -1);
-            }
-            workText += ell;
-          }
-          ctx.fillText(workText, 250, panelCenterY - 2);
-
-          const role = w.role || '出演';
-          ctx.font = `600 9px ${FONT_STACK.cn}`;
-          const rw = ctx.measureText(role).width;
-          const rx = 250;
-          const ry = panelCenterY + 18;
-          const rh = 16;
-          const rpad = 6;
-
-          fillRoundRect(ctx, rx, ry, rw + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
-          ctx.save();
-          ctx.strokeStyle = LAYOUT.colors.tagBorder;
-          ctx.lineWidth = 1;
-          roundRectPath(ctx, rx, ry, rw + rpad * 2, rh, 4);
-          ctx.stroke();
-          ctx.restore();
-
-          ctx.fillStyle = LAYOUT.colors.accent;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(role, rx + rpad + rw / 2, ry + rh / 2);
-        }
-      }
-    } else {
-      const hasWork1 = !!data.works[0];
-      const hasWork2 = !!data.works[1];
-
-      if (hasWork1) {
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.font = `400 10px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.fillText('出演作品', 60, py + 16);
-
-        ctx.font = `700 13px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textMain;
-        
-        const wMaxW = 140;
-        let w1Text = data.works[0].name;
-        if (ctx.measureText(w1Text).width > wMaxW) {
-          const ell = '…';
-          while (w1Text.length && ctx.measureText(w1Text + ell).width > wMaxW) {
-            w1Text = w1Text.slice(0, -1);
-          }
-          w1Text += ell;
-        }
-        ctx.fillText(w1Text, 60, py + 33);
-
-        const r1 = data.works[0].role || '出演';
-        ctx.font = `600 9px ${FONT_STACK.cn}`;
-        const rw1 = ctx.measureText(r1).width;
-        const rx1 = 60;
-        const ry1 = py + 54;
-        const rh = 16;
-        const rpad = 6;
-
-        fillRoundRect(ctx, rx1, ry1, rw1 + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
-        ctx.save();
-        ctx.strokeStyle = LAYOUT.colors.tagBorder;
-        ctx.lineWidth = 1;
-        roundRectPath(ctx, rx1, ry1, rw1 + rpad * 2, rh, 4);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.fillStyle = LAYOUT.colors.accent;
-        ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(r1, rx1 + rpad + rw1 / 2, ry1 + rh / 2);
-      }
+        const firstMid = rowTop + row.h / 2 - (row.lines.length - 1) * nameLineH / 2;
+        row.lines.forEach((ln, j) => ctx.fillText(ln, cvX, firstMid + j * nameLineH));
 
-      if (hasWork2) {
-        drawVDivider(ctx, 240, py + 16, 58, LAYOUT.divider2.alpha, 0.25, 0.75);
-
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.font = `400 10px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.fillText('出演作品', 260, py + 16);
-
-        ctx.font = `700 13px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textMain;
-        
-        const wMaxW = 140;
-        let w2Text = data.works[1].name;
-        if (ctx.measureText(w2Text).width > wMaxW) {
-          const ell = '…';
-          while (w2Text.length && ctx.measureText(w2Text + ell).width > wMaxW) {
-            w2Text = w2Text.slice(0, -1);
-          }
-          w2Text += ell;
-        }
-        ctx.fillText(w2Text, 260, py + 33);
-
-        const r2 = data.works[1].role || '出演';
-        ctx.font = `600 9px ${FONT_STACK.cn}`;
-        const rw2 = ctx.measureText(r2).width;
-        const rx2 = 260;
-        const ry2 = py + 54;
-        const rh = 16;
-        const rpad = 6;
-
-        fillRoundRect(ctx, rx2, ry2, rw2 + rpad * 2, rh, 4, LAYOUT.colors.tagBg);
-        ctx.save();
-        ctx.strokeStyle = LAYOUT.colors.tagBorder;
-        ctx.lineWidth = 1;
-        roundRectPath(ctx, rx2, ry2, rw2 + rpad * 2, rh, 4);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.fillStyle = LAYOUT.colors.accent;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(r2, rx2 + rpad + rw2 / 2, ry2 + rh / 2);
-      }
-
-      if (!hasWork1 && !hasWork2) {
-        ctx.font = `400 12px ${FONT_STACK.cn}`;
-        ctx.fillStyle = LAYOUT.colors.textSub;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('暂无出演作品信息', px + pw / 2, py + ph / 2);
+        rowTop += row.h + cvRowGap;
       }
     }
 
-    // 7. 简介
+    if (cvCount > 0 && workCount > 0) {
+      drawVDivider(ctx, dividerX, py + 16, ph - 32, LAYOUT.divider2.alpha, 0.25, 0.75);
+    }
+
+    if (workCount > 0) {
+      const workNameX = cvCount > 0 ? 250 : 60;
+      drawColLabel('出演作品', workNameX);
+      for (let i = 0; i < workCount; i++) {
+        drawWorkRow(data.works[i], workNameX, contentTop + workFirst + i * workRowH);
+      }
+    }
+
+    if (cvCount === 0 && workCount === 0) {
+      ctx.font = `400 12px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('暂无出演作品信息', px + pw / 2, py + ph / 2);
+    }
+
+
+
+    // 7. 简介（紧贴面板底部；与「面板上边 → 海报」的 26px 间距对称一致）
     if (data.summary) {
-      drawText(ctx, data.summary, LAYOUT.summary.x, 404 + extraH, {
+      const summaryY = py + ph + 26;
+      const summaryMaxLines = Math.max(1, Math.min(8,
+        Math.floor((LAYOUT.footer.y - summaryY - 12) / LAYOUT.summary.lineHeight)));
+      drawText(ctx, data.summary, LAYOUT.summary.x, summaryY, {
         font: `400 ${LAYOUT.summary.size}px ${FONT_STACK.cn}`,
         color: 'rgba(245,245,247,0.70)',
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
-        maxLines: 8,
+        maxLines: summaryMaxLines,
+        kinsoku: true,
       });
     }
 
-    // 8. Footer
-    ctx.fillStyle = LAYOUT.colors.footerBg;
-    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y + extraH, LAYOUT.footer.w, LAYOUT.footer.h);
-
-    const qrAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.qrY;
-    ctx.save();
-    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
-    if (qrImg) {
-      const qrPad = 11;
-      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
-    }
-    ctx.restore();
-
-    const tipAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.tipY;
-    drawText(ctx, '扫码查看角色详情', LAYOUT.footer.tipX, tipAbsY, {
-      font: `700 14px ${FONT_STACK.cn}`,
-      color: LAYOUT.colors.footerDark,
+    // 8. Footer（固定在卡片底部）
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看角色详情',
+      urlText: `bgm.tv/character/${data.id}`,
+      style,
     });
-    drawText(ctx, `bgm.tv/character/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
-      font: `12px ${FONT_STACK.mono}`,
-      color: LAYOUT.colors.footerText,
-    });
-
-    if (logoImg) {
-      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
-      const drawH = logoImg.naturalHeight * lr;
-      const drawY = LAYOUT.footer.y + extraH + (LAYOUT.footer.h - drawH) / 2;
-      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
-    } else {
-      ctx.save();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.font = `900 20px ${FONT_STACK.cn}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
-      ctx.fillStyle = LAYOUT.colors.accent;
-      ctx.beginPath();
-      ctx.arc(dotX, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      ctx.restore();
-    }
 
     return canvas;
   }
@@ -1922,19 +1809,21 @@
 
     const data = preparePersonData(rawData);
 
-    // 动态面板高度：随参与作品条数增长（最多 5 部）
-    const workCount = Math.min(5, data.works.length);
+    // 动态面板高度：随参与作品条数增长（最多 3 部，避免挤占简介区域）
+    const workCount = Math.min(3, data.works.length);
     const labelH = 10;
     const labelGap = 12;
     const rowH = 28;
     const contentH = Math.max(workCount > 0 ? labelH + labelGap + workCount * rowH : 55, 55);
     const panelPadV = 20;
     const ph = Math.ceil(contentH + panelPadV * 2);
-    const extraH = Math.max(0, ph - 90);
-    const cardH = LAYOUT.h + extraH;
+    // 卡片高度固定为 subject 页高度（720），面板增高不再撑高整卡：
+    // 简介紧随面板底部并按剩余空间自适应行数，footer 始终固定在卡片底部。
+    const cardH = LAYOUT.h;
 
     const { canvas, ctx } = createCanvas(LAYOUT.w, cardH);
     const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
 
     // 1. 背景
     ctx.save();
@@ -2135,63 +2024,28 @@
       ctx.fillText('暂无参与作品信息', px + pw / 2, panelCenterY);
     }
 
-    // 7. 简介
+    // 7. 简介（紧贴面板底部；与「面板上边 → 海报」的 26px 间距对称一致）
     if (data.summary) {
-      drawText(ctx, data.summary, LAYOUT.summary.x, 404 + extraH, {
+      const summaryY = py + ph + 26;
+      const summaryMaxLines = Math.max(1, Math.min(8,
+        Math.floor((LAYOUT.footer.y - summaryY - 12) / LAYOUT.summary.lineHeight)));
+      drawText(ctx, data.summary, LAYOUT.summary.x, summaryY, {
         font: `400 ${LAYOUT.summary.size}px ${FONT_STACK.cn}`,
         color: 'rgba(245,245,247,0.70)',
         maxWidth: LAYOUT.summary.w,
         lineHeight: LAYOUT.summary.lineHeight,
-        maxLines: 8,
+        maxLines: summaryMaxLines,
+        kinsoku: true,
       });
     }
 
-    // 8. Footer
-    ctx.fillStyle = LAYOUT.colors.footerBg;
-    ctx.fillRect(LAYOUT.footer.x, LAYOUT.footer.y + extraH, LAYOUT.footer.w, LAYOUT.footer.h);
-
-    const qrAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.qrY;
-    ctx.save();
-    clipRoundRect(ctx, LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize, LAYOUT.footer.qrRadius);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(LAYOUT.footer.qrX, qrAbsY, LAYOUT.footer.qrSize, LAYOUT.footer.qrSize);
-    if (qrImg) {
-      const qrPad = 11;
-      ctx.drawImage(qrImg, LAYOUT.footer.qrX + qrPad, qrAbsY + qrPad, LAYOUT.footer.qrSize - qrPad * 2, LAYOUT.footer.qrSize - qrPad * 2);
-    }
-    ctx.restore();
-
-    const tipAbsY = LAYOUT.footer.y + extraH + LAYOUT.footer.tipY;
-    drawText(ctx, '扫码查看人物详情', LAYOUT.footer.tipX, tipAbsY, {
-      font: `700 14px ${FONT_STACK.cn}`,
-      color: LAYOUT.colors.footerDark,
+    // 8. Footer（固定在卡片底部）
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看人物详情',
+      urlText: `bgm.tv/person/${data.id}`,
+      style,
     });
-    drawText(ctx, `bgm.tv/person/${data.id}`, LAYOUT.footer.tipX, tipAbsY + 20, {
-      font: `12px ${FONT_STACK.mono}`,
-      color: LAYOUT.colors.footerText,
-    });
-
-    if (logoImg) {
-      const lr = LAYOUT.footer.logoW / logoImg.naturalWidth;
-      const drawH = logoImg.naturalHeight * lr;
-      const drawY = LAYOUT.footer.y + extraH + (LAYOUT.footer.h - drawH) / 2;
-      ctx.drawImage(logoImg, LAYOUT.footer.logoX, drawY, LAYOUT.footer.logoW, drawH);
-    } else {
-      ctx.save();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.font = `900 20px ${FONT_STACK.cn}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('bangumi', LAYOUT.footer.logoX + LAYOUT.footer.logoW - 18, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      const dotX = LAYOUT.footer.logoX + LAYOUT.footer.logoW - 16;
-      ctx.fillStyle = LAYOUT.colors.accent;
-      ctx.beginPath();
-      ctx.arc(dotX, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2 - 8, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = LAYOUT.colors.footerDark;
-      ctx.fillText('.tv', LAYOUT.footer.logoX + LAYOUT.footer.logoW, LAYOUT.footer.y + extraH + LAYOUT.footer.h / 2);
-      ctx.restore();
-    }
 
     return canvas;
   }
@@ -2278,6 +2132,7 @@
   async function generateShareCard(opts = {}) {
     if (!isAllowedHost()) throw new Error('当前站点不在支持列表');
 
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
     const characterId = opts.id || parseCharacterId();
     const isChar = !!characterId && isCharacterPage();
     const personId = opts.id || parsePersonId();
@@ -2305,6 +2160,7 @@
 
       const canvas = await renderPersonCard(data, posterImg, qrImg, logoImg, {
         tainted: !posterImg,
+        style,
       });
 
       let blob;
@@ -2342,6 +2198,7 @@
 
       const canvas = await renderCharacterCard(data, posterImg, qrImg, logoImg, cvImgs, {
         tainted: !posterImg,
+        style,
       });
 
       let blob;
@@ -2374,6 +2231,7 @@
 
       const canvas = await renderCard(data, posterImg, qrImg, logoImg, {
         tainted: !posterImg,
+        style,
       });
 
       let blob;
@@ -2458,6 +2316,50 @@
 
   function createUI(core) {
   const ns = 'bgm-share-card';
+
+
+  const STYLE_COOKIE = 'bgm_share_card_style';
+  const STYLE_OPTS = [
+    { value: 'classic', label: '经典' },
+    { value: 'immersive', label: '沉浸' },
+  ];
+  function getStyleValue() {
+    const m = document.cookie.match(/(?:^|;\s*)bgm_share_card_style=([^;]+)/);
+    return m && decodeURIComponent(m[1]) === 'immersive' ? 'immersive' : 'classic';
+  }
+  function setStyleValue(v) {
+    const exp = new Date(Date.now() + 365 * 864e5).toUTCString();
+    document.cookie = `${STYLE_COOKIE}=${encodeURIComponent(v)}; expires=${exp}; path=/`;
+  }
+
+
+  function registerConfig() {
+    try {
+      const uka = window.chiiLib && window.chiiLib.ukagaka;
+      if (!uka || typeof uka.addPanelTab !== 'function') return;
+      uka.addPanelTab({
+        tab: 'bgm_share_card',
+        label: '分享卡片',
+        type: 'options',
+        config: [
+          {
+            title: '卡片风格',
+            name: 'bgmShareCardStyle',
+            type: 'radio',
+            defaultValue: 'classic',
+            getCurrentValue: getStyleValue,
+            onChange: setStyleValue,
+            options: [
+              { value: 'classic', label: '经典' },
+              { value: 'immersive', label: '沉浸' },
+            ],
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn('[bgm-share-card] 注册面板 Tab 失败', e && e.message);
+    }
+  }
 
   function ensureStyles() {
     if (document.getElementById(`${ns}-styles`)) return;
@@ -2546,6 +2448,20 @@
       .${ns}-btn:hover { transform: translateY(-1px); }
       .${ns}-btn-primary { background: #F09199; color: #1a1a1a; }
       .${ns}-btn-secondary { background: rgba(255,255,255,0.10); color: #f5f5f7; }
+      .${ns}-styletabs { display: flex; justify-content: center; gap: 6px; }
+      .${ns}-styletab {
+        padding: 6px 16px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.06);
+        color: #a0a0b0;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background .15s, color .15s;
+      }
+      .${ns}-styletab:hover { color: #f5f5f7; }
+      .${ns}-styletab.active { background: #F09199; color: #1a1a1a; border-color: transparent; }
       .${ns}-close {
         position: absolute;
         top: 16px;
@@ -2627,10 +2543,20 @@
     const modal = document.createElement('div');
     modal.className = `${ns}-modal`;
 
+    const tabs = document.createElement('div');
+    tabs.className = `${ns}-styletabs`;
+    const tabBtns = {};
+    STYLE_OPTS.forEach(opt => {
+      const b = document.createElement('button');
+      b.className = `${ns}-styletab`;
+      b.textContent = opt.label;
+      tabBtns[opt.value] = b;
+      tabs.appendChild(b);
+    });
+
     const preview = document.createElement('div');
     preview.className = `${ns}-preview`;
     const img = document.createElement('img');
-    img.src = canvas.toDataURL('image/png');
     img.alt = '分享卡片预览';
     preview.appendChild(img);
 
@@ -2655,6 +2581,7 @@
     if (!ios) actions.appendChild(copyBtn);
 
     modal.appendChild(closeBtn);
+    modal.appendChild(tabs);
     modal.appendChild(preview);
     if (ios) {
       const hint = document.createElement('p');
@@ -2667,7 +2594,37 @@
     document.body.appendChild(overlay);
 
     let blob = null;
-    core.exportPNG(canvas).catch(() => core.exportPNGFallback(canvas)).then(b => { blob = b; });
+    let busy = false;
+
+    function setActiveTab(style) {
+      STYLE_OPTS.forEach(o => tabBtns[o.value].classList.toggle('active', o.value === style));
+    }
+    function applyCanvas(cv) {
+      img.src = cv.toDataURL('image/png');
+      blob = null;
+      core.exportPNG(cv).catch(() => core.exportPNGFallback(cv)).then(b => { blob = b; });
+    }
+    setActiveTab(getStyleValue());
+    applyCanvas(canvas);
+
+    STYLE_OPTS.forEach(opt => {
+      tabBtns[opt.value].addEventListener('click', async () => {
+        if (busy || getStyleValue() === opt.value) return;
+        busy = true;
+        setStyleValue(opt.value);
+        setActiveTab(opt.value);
+        setLoading(true);
+        try {
+          const res = await core.generateShareCard({ style: opt.value });
+          applyCanvas(res.canvas);
+        } catch (e) {
+          toast('切换失败：' + e.message);
+        } finally {
+          setLoading(false);
+          busy = false;
+        }
+      });
+    });
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
@@ -2698,7 +2655,7 @@
   async function runGenerate() {
     setLoading(true);
     try {
-      const { canvas } = await core.generateShareCard();
+      const { canvas } = await core.generateShareCard({ style: getStyleValue() });
       showPreview(canvas);
     } catch (err) {
       showError(err.message);
@@ -2770,6 +2727,7 @@
   return {
     init() {
       ensureStyles();
+      registerConfig();
       if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) injectButton();
     },
     showPreview,
