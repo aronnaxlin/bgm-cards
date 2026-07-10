@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T02:47:51.144Z
+// 生成时间：2026-07-10T02:51:06.787Z
 // 内联核心来源：userscript/core.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -1658,10 +1658,10 @@
     // Pre-compute both sides' natural label tops so we can top-align them
     const _cvNaturalLabelY = isMultiCV
       ? panelCenterY - cvBlockH / 2                              // multi-CV block top
-      : panelCenterY - 19;                                       // single-CV legacy offset
+      : panelCenterY - 26;                                       // single-CV: 抬高标签，与名字留出间距
     const _wkNaturalLabelY = isMultiWork
       ? panelCenterY - (10 + 7 + 13 + (workCount - 1) * 22) / 2 // multi-work block top
-      : panelCenterY - 19;                                       // single-work legacy offset
+      : panelCenterY - 26;                                       // single-work: 与声优侧标签对齐
     // Both labels share the higher (smaller Y) of the two, giving top-alignment
     const sharedLabelY = workCount > 0
       ? Math.min(_cvNaturalLabelY, _wkNaturalLabelY)
