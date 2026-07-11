@@ -24,8 +24,8 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-10T03:10:05.962Z
-// 内联核心来源：userscript/core.js
+// 生成时间：2026-07-11T02:57:30.782Z
+// 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
  * 纯浏览器原生 JS，零依赖。三版用户脚本共享同一份实现。
@@ -42,6 +42,8 @@
     w: 500,
     h: 720,
     dpr: Math.max(typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 2, 2),
+    // 圆角走超椭圆（squircle）观感，对齐设计稿的 corner-shape: superellipse(2.2)
+    squircle: 2.2,
     colors: {
       bg: '#0a0a0c',
       textMain: '#f5f5f7',
@@ -190,6 +192,17 @@
       resolved = resolved.replace(/\/pic\/crt\/l\//, `/r/${size}/pic/crt/l/`);
     }
     return resolved;
+  }
+
+  // 用户头像走 /r/{size}/ 缩放代理：lain.bgm.tv 原始 /pic/user/... 路径不带
+  // Access-Control-Allow-Origin，crossOrigin 加载必失败；缩放代理路径才带 CORS 头。
+  function formatUserAvatarUrl(url, size = 200) {
+    if (!url) return '';
+    const cleanUrl = url.startsWith('//') ? 'https:' + url : url;
+    if (/\/r\/\d+\/pic\/user\//.test(cleanUrl)) {
+      return cleanUrl.replace(/\/r\/\d+\/pic\/user\//, `/r/${size}/pic/user/`);
+    }
+    return cleanUrl.replace(/\/pic\/user\//, `/r/${size}/pic/user/`);
   }
 
   function normalizeValue(v) {
@@ -418,6 +431,71 @@
     };
 
     return { id, name, name_cn, type, platform, date, dateLabel, eps, images, infobox, tags, summary, rating: { score, total, rank }, collection };
+  }
+
+  // 是否存在「我的收藏盒」（登录且已收藏该条目）——决定要不要提供「我的记录」卡片
+  function hasMyStatus() {
+    return !!document.querySelector('#panelInterestWrapper .interest_now');
+  }
+
+  // 抓取「我对本条目的观看状态」：状态 / 个人评分 / 短评 / 进度 / 收藏时间 + 用户身份，
+  // 复用 scrapeSubjectPage 拿条目信息与 Bangumi 社区均分。无收藏则返回 null。
+  function scrapeMyStatus() {
+    const panel = document.querySelector('#panelInterestWrapper');
+    const interest = panel && panel.querySelector('.interest_now');
+    if (!interest) return null;
+
+    const subject = scrapeSubjectPage();
+
+    // 状态：按关键词映射（覆盖 看/读/听/玩 各类动词）
+    const t = interest.textContent || '';
+    let status = 'done';
+    if (/搁置/.test(t)) status = 'on_hold';
+    else if (/抛弃/.test(t)) status = 'dropped';
+    else if (/想/.test(t)) status = 'wish';
+    else if (/在[看读听玩]/.test(t)) status = 'doing';
+    else if (/过/.test(t)) status = 'done';
+
+    const labels = collectionLabels(subject.type);
+    const statusLabel = { wish: labels.wish, doing: labels.doing, done: labels.done, on_hold: '搁置', dropped: '抛弃' }[status];
+    const tone = status === 'on_hold' ? 'warn' : status === 'dropped' ? 'neg' : 'pos';
+
+    // 个人评分 + 评价词
+    const rated = panel.querySelector('input[name="rate"]:checked');
+    const myScore = rated ? parseInt(rated.value, 10) || 0 : 0;
+    const rateTip = document.getElementById('rate-tip');
+    const myScoreWord = myScore > 0 ? (rateTip?.textContent?.trim() || '') : '';
+
+    // 短评（隐藏表单首屏已带值，无需展开弹窗）
+    const comment = (panel.querySelector('textarea[name="comment"]')?.value || '').trim();
+
+    // 进度：优先 #watchedeps（已看话数），总数取 .panelProgress 里的 x/y 或条目话数
+    const progText = panel.querySelector('.panelProgress')?.textContent || '';
+    const pm = progText.match(/(\d+)\s*\/\s*(\d+)/);
+    const watched = parseInt(document.querySelector('#watchedeps')?.value, 10);
+    const progCur = Number.isFinite(watched) ? watched : (pm ? parseInt(pm[1], 10) : 0);
+    const progTotal = pm ? parseInt(pm[2], 10) : (subject.eps || 0);
+
+    // 收藏时间：取日期部分
+    const tip = panel.querySelector('p.tip')?.textContent?.trim() || '';
+    const collDate = (tip.split(/\s+/)[0] || '').replace(/\//g, '-');
+
+    // 用户身份：CHOBITS_UID 匹配自己的头像，避免混入评论区他人头像
+    const uid = (typeof window !== 'undefined' && window.CHOBITS_UID) || 0;
+    let avatar = '';
+    if (uid) {
+      const av = document.querySelector(`.avatarNeue[style*="/${uid}_"], .avatarNeue[style*="/${uid}."]`);
+      const m = av && (av.getAttribute('style') || '').match(/url\(['"]?([^'")]+)/);
+      if (m) avatar = formatUserAvatarUrl(m[1].split('?')[0], 200);
+    }
+    const nick = document.querySelector('#dock li.first a[href*="/user/"]')?.textContent?.trim() || 'Bangumi 用户';
+
+    return {
+      subject, status, statusLabel, tone,
+      myScore, myScoreWord, comment,
+      progCur, progTotal, collDate,
+      user: { uid, nick, avatar },
+    };
   }
 
   function scrapeCharacterPage() {
@@ -676,8 +754,33 @@
     return { canvas, ctx };
   }
 
-  function roundRectPath(ctx, x, y, w, h, r) {
+  // 超椭圆（squircle）圆角：|x/r|^n + |y/r|^n = 1，n=2.2 介于圆(2)与方之间，
+  // 观感等价于 CSS corner-shape: superellipse(2.2)。采样为折线，段数越多越平滑。
+  function superellipsePath(ctx, x, y, w, h, r, n, segs) {
+    r = Math.min(r, w / 2, h / 2);
+    const p = 2 / n;
+    const P = (v) => Math.pow(v < 0 ? 0 : v, p);
+    const x2 = x + w, y2 = y + h, HALF = Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x2 - r, y);
+    for (let i = 1; i <= segs; i++) { const t = i / segs * HALF; ctx.lineTo(x2 - r + r * P(Math.sin(t)), y + r - r * P(Math.cos(t))); }   // 右上
+    ctx.lineTo(x2, y2 - r);
+    for (let i = 1; i <= segs; i++) { const t = i / segs * HALF; ctx.lineTo(x2 - r + r * P(Math.cos(t)), y2 - r + r * P(Math.sin(t))); } // 右下
+    ctx.lineTo(x + r, y2);
+    for (let i = 1; i <= segs; i++) { const t = i / segs * HALF; ctx.lineTo(x + r - r * P(Math.sin(t)), y2 - r + r * P(Math.cos(t))); } // 左下
+    ctx.lineTo(x, y + r);
+    for (let i = 1; i <= segs; i++) { const t = i / segs * HALF; ctx.lineTo(x + r - r * P(Math.cos(t)), y + r - r * P(Math.sin(t))); } // 左上
+    ctx.closePath();
+  }
+
+  // 传入 n（如 LAYOUT.squircle）走超椭圆；不传或异常则回退到二次贝塞尔圆角
+  function roundRectPath(ctx, x, y, w, h, r, n) {
     const radius = Math.min(r, w / 2, h / 2);
+    if (n && n > 0 && radius > 0) {
+      try { superellipsePath(ctx, x, y, w, h, radius, n, 16); return; }
+      catch (_) { /* 回退到下方二次曲线 */ }
+    }
     ctx.beginPath();
     ctx.moveTo(x + radius, y);
     ctx.lineTo(x + w - radius, y);
@@ -691,16 +794,16 @@
     ctx.closePath();
   }
 
-  function fillRoundRect(ctx, x, y, w, h, r, fill) {
+  function fillRoundRect(ctx, x, y, w, h, r, fill, n) {
     ctx.save();
-    roundRectPath(ctx, x, y, w, h, r);
+    roundRectPath(ctx, x, y, w, h, r, n);
     ctx.fillStyle = fill;
     ctx.fill();
     ctx.restore();
   }
 
-  function clipRoundRect(ctx, x, y, w, h, r) {
-    roundRectPath(ctx, x, y, w, h, r);
+  function clipRoundRect(ctx, x, y, w, h, r, n) {
+    roundRectPath(ctx, x, y, w, h, r, n);
     ctx.clip();
   }
 
@@ -1192,15 +1295,8 @@
     }
   }
 
-  async function renderCard(rawData, posterImg, qrImg, logoImg, opts = {}) {
-    await document.fonts.ready;
-
-    const data = prepareData(rawData);
-    const { canvas, ctx } = createCanvas();
-    const tainted = opts.tainted || !posterImg;
-    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
-
-    // 1. 背景
+  // 模糊海报底 + 暗色径向遮罩（条目卡与观看记录卡共用同一视觉底）
+  function drawBlurBackdrop(ctx, posterImg, tainted) {
     ctx.save();
     if (!tainted && posterImg) {
       ctx.fillStyle = LAYOUT.colors.bg;
@@ -1224,13 +1320,24 @@
     }
     ctx.restore();
 
-    // 2. 暗色遮罩
     const overlay = ctx.createRadialGradient(LAYOUT.w / 2, 0, 0, LAYOUT.w / 2, LAYOUT.h / 2, LAYOUT.h);
     overlay.addColorStop(0, 'rgba(0,0,0,0.18)');
     overlay.addColorStop(0.65, 'rgba(0,0,0,0.52)');
     overlay.addColorStop(1, 'rgba(0,0,0,0.72)');
     ctx.fillStyle = overlay;
     ctx.fillRect(0, 0, LAYOUT.w, LAYOUT.h);
+  }
+
+  async function renderCard(rawData, posterImg, qrImg, logoImg, opts = {}) {
+    await document.fonts.ready;
+
+    const data = prepareData(rawData);
+    const { canvas, ctx } = createCanvas();
+    const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
+
+    // 1+2. 背景模糊底 + 暗色遮罩
+    drawBlurBackdrop(ctx, posterImg, tainted);
 
     // 3. 海报（带阴影与圆角）
     if (!tainted && posterImg) {
@@ -2151,6 +2258,298 @@
   }
 
   // ========================================================================
+  // 观看记录卡片（主打「我的状态」，复用底/毛玻璃框/星星/footer/超椭圆圆角）
+  // ========================================================================
+
+  const TONE_COLORS = { pos: LAYOUT.colors.accent, warn: '#E0B341', neg: '#9aa0aa' };
+  const BGM_NUM = '#dcdce2';
+  const BGM_STAR = 'rgba(255,255,255,0.5)';
+  const SQ = LAYOUT.squircle;
+
+  // 圆角描边（超椭圆），配合 fillRoundRect 画毛玻璃面板边框
+  function strokeRoundRect(ctx, x, y, w, h, r, color, lw) {
+    ctx.save();
+    roundRectPath(ctx, x, y, w, h, r, SQ);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw || 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 毛玻璃面板（与条目卡评分面板同款：panelBg 底 + panelBorder 边）
+  function drawGlassPanel(ctx, x, y, w, h, r) {
+    fillRoundRect(ctx, x, y, w, h, r, LAYOUT.colors.panelBg, SQ);
+    strokeRoundRect(ctx, x, y, w, h, r, LAYOUT.colors.panelBorder, 1);
+  }
+
+  function drawStatusPill(ctx, label, tone, rightX, cy) {
+    const color = TONE_COLORS[tone] || LAYOUT.colors.accent;
+    ctx.font = `700 13px ${FONT_STACK.cn}`;
+    const padX = 15, h = 26;
+    const tw = ctx.measureText(label).width;
+    const w = tw + padX * 2;
+    const x = rightX - w, y = cy - h / 2;
+    const rgb = tone === 'warn' ? '224,179,65' : tone === 'neg' ? '154,160,170' : '240,145,153';
+    fillRoundRect(ctx, x, y, w, h, h / 2, `rgba(${rgb},0.14)`, SQ);
+    strokeRoundRect(ctx, x, y, w, h, h / 2, `rgba(${rgb},0.3)`, 1);
+    ctx.fillStyle = color;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + padX, cy + 1);
+    return w;
+  }
+
+  // Bangumi 社区均分（辅助元素，中性色，右对齐三行：标签 / 分数 / 星级）
+  function drawBgmBadge(ctx, score, rightX, topY) {
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = `600 9px ${FONT_STACK.cn}`;
+    ctx.fillStyle = LAYOUT.colors.textSub;
+    ctx.fillText('BANGUMI', rightX, topY + 9);
+    ctx.font = `700 21px ${FONT_STACK.mono}`;
+    ctx.fillStyle = BGM_NUM;
+    ctx.fillText(score.toFixed(1), rightX, topY + 31);
+    // 星级右对齐：drawStars 从左画，故左移一个星宽
+    const starSize = 9;
+    drawStars(ctx, score, rightX - starsWidth(starSize), topY + 40, starSize, BGM_STAR);
+  }
+
+  function drawVerdictPanel(ctx, x, y, w, myScore, word) {
+    const h = 92;
+    drawGlassPanel(ctx, x, y, w, h, 22);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = `600 11px ${FONT_STACK.cn}`;
+    ctx.fillStyle = LAYOUT.colors.textSub;
+    ctx.fillText('我的评分', x + 20, y + 26);
+    // 大号分数（个人分为整数，直接绘制）
+    const cy = y + 58;
+    ctx.font = `800 40px ${FONT_STACK.mono}`;
+    ctx.fillStyle = LAYOUT.colors.accent;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(myScore), x + 20, cy + 4);
+    const numW = ctx.measureText(String(myScore)).width;
+    const rx = x + 20 + numW + 20;
+    drawStars(ctx, myScore, rx, cy - 4, 13, LAYOUT.colors.accent);
+    if (word) {
+      ctx.font = `700 15px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textMain;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(word, rx, cy + 20);
+    }
+    return h;
+  }
+
+  function drawProgressPanel(ctx, x, y, w, cur, total) {
+    const h = 68;
+    drawGlassPanel(ctx, x, y, w, h, 18);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = `600 11px ${FONT_STACK.cn}`;
+    ctx.fillStyle = LAYOUT.colors.textSub;
+    ctx.fillText('观看进度', x + 20, y + 26);
+    ctx.textAlign = 'right';
+    ctx.font = `700 14px ${FONT_STACK.mono}`;
+    ctx.fillStyle = LAYOUT.colors.textMain;
+    ctx.fillText(`${cur} / ${total} 话`, x + w - 20, y + 26);
+    // 进度条
+    const barX = x + 20, barY = y + 40, barW = w - 40, barH = 6;
+    fillRoundRect(ctx, barX, barY, barW, barH, barH / 2, 'rgba(255,255,255,0.1)', SQ);
+    const pct = total > 0 ? Math.max(0, Math.min(1, cur / total)) : 0;
+    if (pct > 0) fillRoundRect(ctx, barX, barY, Math.max(barH, barW * pct), barH, barH / 2, LAYOUT.colors.accent, SQ);
+    return h;
+  }
+
+  async function renderStatusCard(data, posterImg, qrImg, logoImg, avatarImg, opts = {}) {
+    await document.fonts.ready;
+    const { canvas, ctx } = createCanvas();
+    const tainted = opts.tainted || !posterImg;
+    const style = opts.style === 'immersive' ? 'immersive' : 'classic';
+    const s = data.subject;
+
+    // 1+2. 复用条目卡的模糊底 + 暗色遮罩
+    drawBlurBackdrop(ctx, posterImg, tainted);
+
+    const PAD = 40;
+    const CW = LAYOUT.w - PAD * 2;      // 420
+    const CONTENT_BOTTOM = LAYOUT.footer.y; // 612
+    const titleZh = (s.name_cn || s.name || '').trim();
+    const titleJa = s.name_cn ? s.name : '';
+    const bgmScore = s.rating?.score || 0;
+
+    // ---- 身份行 ----
+    let y = 34;
+    const avR = 23, avCx = PAD + avR, avCy = y + avR;
+    if (avatarImg) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(avCx, avCy, avR, 0, Math.PI * 2); ctx.clip();
+      drawImageCover(ctx, avatarImg, PAD, y, avR * 2, avR * 2);
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath(); ctx.arc(avCx, avCy, avR, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.restore();
+    } else {
+      fillRoundRect(ctx, PAD, y, avR * 2, avR * 2, avR, 'rgba(255,255,255,0.08)', SQ);
+    }
+    const idX = PAD + avR * 2 + 12;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.font = `800 17px ${FONT_STACK.cn}`;
+    ctx.fillStyle = LAYOUT.colors.textMain;
+    ctx.fillText(data.user.nick, idX, y + 18);
+    ctx.font = `12px ${FONT_STACK.mono}`;
+    ctx.fillStyle = LAYOUT.colors.textSub;
+    ctx.fillText('@' + (data.user.nick || '').toLowerCase(), idX, y + 36);
+    drawStatusPill(ctx, data.statusLabel, data.tone, LAYOUT.w - PAD, avCy);
+
+    y = 34 + avR * 2 + 26;   // 106
+
+    const family = data.comment ? 'text' : 'hero';
+
+    if (family === 'text') {
+      // ---- 条目条（小封面 + 标题 + Bangumi 均分）----
+      const pw = 78, ph = 110;
+      if (posterImg && !tainted) {
+        ctx.save();
+        clipRoundRect(ctx, PAD, y, pw, ph, 14, SQ);
+        drawImageCover(ctx, posterImg, PAD, y, pw, ph);
+        ctx.restore();
+      } else {
+        fillRoundRect(ctx, PAD, y, pw, ph, 14, 'rgba(255,255,255,0.06)', SQ);
+      }
+      const infoX = PAD + pw + 16;
+      const bgmW = 64;                       // Bangumi 均分区右侧预留
+      const infoR = LAYOUT.w - PAD - bgmW - 12;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.font = `800 21px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textMain;
+      drawText(ctx, titleZh, infoX, y + 6, {
+        font: `800 21px ${FONT_STACK.cn}`, color: LAYOUT.colors.textMain,
+        maxWidth: infoR - infoX, lineHeight: 26, maxLines: 2, baseline: 'top',
+      });
+      if (titleJa) {
+        ctx.font = `400 12px ${FONT_STACK.ja}`;
+        ctx.fillStyle = LAYOUT.colors.textSub;
+        ctx.fillText(clip(ctx, titleJa, infoR - infoX), infoX, y + 56);
+      }
+      const meta = [mediaLabel(s.type, s.platform)];
+      if (data.progTotal) meta.push(`全 ${data.progTotal} 话`);
+      if (data.status === 'done') meta.push(`看完 ${data.progCur}/${data.progTotal}`);
+      else if ((data.status === 'doing' || data.status === 'on_hold') && data.progCur) meta.push(`看到 ${data.progCur}/${data.progTotal}`);
+      ctx.font = `11px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.fillText(clip(ctx, meta.join(' · '), infoR - infoX), infoX, y + 78);
+      if (bgmScore > 0) drawBgmBadge(ctx, bgmScore, LAYOUT.w - PAD, y + 12);
+
+      y += ph + 24;
+
+      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord) + 18; }
+      if ((data.status === 'doing' || data.status === 'on_hold') && data.progTotal) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 18; }
+
+      // ---- 短评（主体，占剩余空间）----
+      const dateH = 30;
+      const commentTop = y + 8;
+      const commentMaxH = CONTENT_BOTTOM - 20 - dateH - commentTop;
+      const lineH = 26;
+      const maxLines = Math.max(2, Math.floor(commentMaxH / lineH));
+      // 装饰引号
+      ctx.font = `800 60px Georgia, ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.accent;
+      ctx.globalAlpha = 0.5;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText('“', PAD, commentTop + 30);
+      ctx.globalAlpha = 1;
+      drawText(ctx, data.comment, PAD, commentTop + 40, {
+        font: `400 15px ${FONT_STACK.cn}`, color: 'rgba(245,245,247,0.9)',
+        maxWidth: CW, lineHeight: lineH, maxLines, kinsoku: true, baseline: 'top',
+      });
+    } else {
+      // ---- 封面优先（无短评）----
+      const hh = 300;
+      if (posterImg && !tainted) {
+        ctx.save();
+        clipRoundRect(ctx, PAD, y, CW, hh, 24, SQ);
+        drawImageCover(ctx, posterImg, PAD, y, CW, hh);
+        // 底部渐隐使标题可读
+        const g = ctx.createLinearGradient(0, y + hh, 0, y + hh - 150);
+        g.addColorStop(0, 'rgba(0,0,0,0.82)');
+        g.addColorStop(0.55, 'rgba(0,0,0,0.2)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(PAD, y, CW, hh);
+        ctx.restore();
+      } else {
+        fillRoundRect(ctx, PAD, y, CW, hh, 24, 'rgba(255,255,255,0.06)', SQ);
+      }
+      // 标题（左下）
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.font = `800 26px ${FONT_STACK.cn}`;
+      ctx.fillStyle = '#fff';
+      ctx.fillText(clip(ctx, titleZh, CW - 150), PAD + 20, y + hh - 30);
+      if (titleJa) {
+        ctx.font = `400 12px ${FONT_STACK.ja}`;
+        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        ctx.fillText(clip(ctx, titleJa, CW - 150), PAD + 20, y + hh - 12);
+      }
+      // Bangumi 均分小胶囊（右下）
+      if (bgmScore > 0) {
+        ctx.font = `700 15px ${FONT_STACK.mono}`;
+        const numTxt = bgmScore.toFixed(1);
+        const numW = ctx.measureText(numTxt).width;
+        ctx.font = `12px ${FONT_STACK.cn}`;
+        const labW = ctx.measureText('Bangumi ').width;
+        const pillW = labW + numW + 22, pillH = 26;
+        const px = PAD + CW - 18 - pillW, py = y + hh - 18 - pillH;
+        fillRoundRect(ctx, px, py, pillW, pillH, 12, 'rgba(10,10,12,0.5)', SQ);
+        strokeRoundRect(ctx, px, py, pillW, pillH, 12, 'rgba(255,255,255,0.14)', 1);
+        ctx.textBaseline = 'middle';
+        ctx.font = `12px ${FONT_STACK.cn}`;
+        ctx.fillStyle = 'rgba(255,255,255,0.82)';
+        ctx.fillText('Bangumi', px + 11, py + pillH / 2 + 1);
+        ctx.font = `700 15px ${FONT_STACK.mono}`;
+        ctx.fillStyle = '#fff';
+        ctx.fillText(numTxt, px + 11 + labW, py + pillH / 2 + 1);
+        ctx.textBaseline = 'alphabetic';
+      }
+      y += hh + 22;
+      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord) + 14; }
+      if ((data.status === 'doing' || data.status === 'on_hold') && data.progTotal) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 14; }
+    }
+
+    // ---- 标记日期（贴 footer 上沿）----
+    if (data.collDate) {
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.font = `12px ${FONT_STACK.cn}`;
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.fillText(`${formatCollDate(data.collDate)} · ${data.statusLabel}`, PAD, CONTENT_BOTTOM - 22);
+    }
+
+    // ---- Footer（原样复用）----
+    drawFooter(ctx, {
+      qrImg, logoImg,
+      tipText: '扫码查看条目',
+      urlText: `bgm.tv/subject/${s.id}`,
+      style,
+    });
+
+    return canvas;
+  }
+
+  // 文本超宽截断加省略号（单行）
+  function clip(ctx, text, maxWidth) {
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxWidth) t = t.slice(0, -1);
+    return t + '…';
+  }
+
+  // "2025-4-16" → "2025 年 4 月 16 日"
+  function formatCollDate(d) {
+    const m = (d || '').match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    return m ? `${m[1]} 年 ${+m[2]} 月 ${+m[3]} 日` : d;
+  }
+
+  // ========================================================================
   // 主流程
   // ========================================================================
 
@@ -2165,6 +2564,44 @@
 
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
+    }
+
+    if (opts.kind === 'status' && !isChar && !isPerson) {
+      const data = scrapeMyStatus();
+      if (!data) throw new Error('未找到你的收藏记录（需登录并已收藏该条目）');
+      const posterUrl = pickPosterUrl(data.subject.images);
+
+      const [posterImg, qrImg, logoImg, avatarImg] = await Promise.all([
+        posterUrl ? loadImage(posterUrl, { crossOrigin: 'anonymous' }).catch(err => {
+          console.warn('[share-card] 海报加载失败，使用降级布局', err.message);
+          return null;
+        }) : Promise.resolve(null),
+        makeQRImage(subjectPageUrl(data.subject.id)).catch(err => {
+          console.warn('[share-card] QR 加载失败', err.message);
+          return null;
+        }),
+        loadLogoImage(),
+        // 头像用严格 CORS 加载（不像 loadImage 那样静默回退到非 CORS）：
+        // 回退加载虽然能显示，但会把整张 canvas 标记为 tainted，导出直接失败。
+        // CORS 失败就当作没有头像，走占位圆圈，好过整张卡片导出崩溃。
+        data.user.avatar ? loadImageRaw(data.user.avatar, true).catch(() => null) : Promise.resolve(null),
+      ]);
+
+      const canvas = await renderStatusCard(data, posterImg, qrImg, logoImg, avatarImg, {
+        tainted: !posterImg,
+        style,
+      });
+
+      let blob;
+      try {
+        blob = await exportPNG(canvas);
+      } catch (secErr) {
+        console.warn('[share-card] toBlob 失败，尝试 toDataURL 降级', secErr.message);
+        blob = await exportPNGFallback(canvas).catch(() => {
+          throw new Error('图片导出失败：' + secErr.message);
+        });
+      }
+      return { canvas, blob, id: data.subject.id, data };
     }
 
     if (isPerson) {
@@ -2290,6 +2727,8 @@
     personPageUrl,
     isPersonPage,
     pickPosterUrl,
+    formatCrtUrl,
+    formatUserAvatarUrl,
     normalizeValue,
     pickStaff,
     mediaLabel,
@@ -2300,7 +2739,10 @@
     scrapeSubjectPage,
     scrapeCharacterPage,
     scrapePersonPage,
+    scrapeMyStatus,
+    hasMyStatus,
     loadImage,
+    loadImageRaw,
     makeQRImage,
     loadLogoImage,
     createCanvas,
@@ -2315,6 +2757,9 @@
     renderCard,
     renderCharacterCard,
     renderPersonCard,
+    renderStatusCard,
+    drawBlurBackdrop,
+    superellipsePath,
     exportPNG,
     exportPNGFallback,
     dataURLToBlob,
@@ -2342,7 +2787,8 @@
   function createUI(core) {
   const ns = 'bgm-share-card';
 
-
+  // 卡片风格：'classic'(经典白块) | 'immersive'(沉浸 / 无白块深色)。
+  // 存于 cookie，任意脚本环境通用；预览弹窗内即可切换、生成时读取。
   const STYLE_COOKIE = 'bgm_share_card_style';
   const STYLE_OPTS = [
     { value: 'classic', label: '经典' },
@@ -2357,7 +2803,8 @@
     document.cookie = `${STYLE_COOKIE}=${encodeURIComponent(v)}; expires=${exp}; path=/`;
   }
 
-
+  // 若页面存在超合金 chiiLib（bgm.tv 页面全局，三版脚本都能用），
+  // 新建一个「分享卡片」专属面板 Tab 放风格选项；无 chiiLib 时静默跳过。
   function registerConfig() {
     try {
       const uka = window.chiiLib && window.chiiLib.ukagaka;
@@ -2391,8 +2838,16 @@
     const style = document.createElement('style');
     style.id = `${ns}-styles`;
     style.textContent = `
-      .${ns}-trigger { cursor: pointer; }
       .${ns}-trigger-btn { cursor: pointer; }
+      .${ns}-trigger, .${ns}-status-trigger { cursor: pointer; }
+      /* 「卡片」「我的记录」另起一行，不挤占原有「收集/复制/分享」那一行；
+         nowrap→wrap 只在这一整行放不下（也就是我们加了内容）时才生效，不影响原布局 */
+      .shareBtn { flex-wrap: wrap !important; row-gap: 6px; }
+      .${ns}-row {
+        flex: 0 0 100%;
+        display: flex;
+        gap: 5px;
+      }
       .${ns}-ico {
         display: inline-block !important;
         width: 16px !important;
@@ -2562,7 +3017,7 @@
     el.classList.toggle('show', show);
   }
 
-  function showPreview(canvas) {
+  function showPreview(canvas, kind) {
     const overlay = document.createElement('div');
     overlay.className = `${ns}-overlay`;
 
@@ -2647,7 +3102,7 @@
         setActiveTab(opt.value);
         setLoading(true);
         try {
-          const res = await core.generateShareCard({ style: opt.value });
+          const res = await core.generateShareCard({ style: opt.value, kind });
           applyCanvas(res.canvas);
         } catch (e) {
           toast('切换失败：' + e.message);
@@ -2660,7 +3115,9 @@
 
     downloadBtn.addEventListener('click', () => {
       if (!blob) return toast('图片尚未生成完毕');
-      core.download(blob, `bgm-share-card-${core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()}.png`);
+      const id = core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId();
+      const suffix = kind === 'status' ? '-my-status' : '';
+      core.download(blob, `bgm-share-card-${id}${suffix}.png`);
     });
 
     if (!ios) {
@@ -2680,11 +3137,11 @@
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   }
 
-  async function runGenerate() {
+  async function runGenerate(kind) {
     setLoading(true);
     try {
-      const { canvas } = await core.generateShareCard({ style: getStyleValue() });
-      showPreview(canvas);
+      const { canvas } = await core.generateShareCard({ style: getStyleValue(), kind });
+      showPreview(canvas, kind);
     } catch (err) {
       toast('生成失败：' + err.message);
     } finally {
@@ -2724,6 +3181,11 @@
 
     const shareBtn = document.querySelector('.shareBtn');
     if (shareBtn) {
+      // 「卡片」「我的记录」是我们额外加的两个入口，不挤占原有「收集/复制/分享」这一行——
+      // 两者包进一个 flex-basis:100% 的行容器，整体追加到 shareBtn 末尾，强制另起一行。
+      // 容器仍是 shareBtn 的后代，`.shareBtn a.icon .title` 等站内样式选择器照常生效。
+      const row = document.createElement('span');
+      row.className = `${ns}-row`;
 
       const action = document.createElement('span');
       action.className = `action ${ns}-action`;
@@ -2734,10 +3196,23 @@
       a.innerHTML = `<span class="ico ${ns}-ico"></span><span class="title">卡片</span>`;
       a.addEventListener('click', (e) => { e.preventDefault(); runGenerate(); });
       action.appendChild(a);
+      row.appendChild(action);
 
-      const firstAction = shareBtn.querySelector('.action');
-      if (firstAction) firstAction.after(action);
-      else shareBtn.insertBefore(action, shareBtn.firstChild);
+      // 「我的记录」卡片：仅当已收藏该条目（收藏盒里有状态）时才提供入口
+      if (core.hasMyStatus && core.hasMyStatus()) {
+        const statusAction = document.createElement('span');
+        statusAction.className = `action ${ns}-status-action`;
+        const sa = document.createElement('a');
+        sa.className = `icon ${ns}-status-trigger`;
+        sa.href = 'javascript:void(0);';
+        sa.title = '生成我的观看记录卡片';
+        sa.innerHTML = `<span class="ico ${ns}-ico"></span><span class="title">我的记录</span>`;
+        sa.addEventListener('click', (e) => { e.preventDefault(); runGenerate('status'); });
+        statusAction.appendChild(sa);
+        row.appendChild(statusAction);
+      }
+
+      shareBtn.appendChild(row);
       return;
     }
 
@@ -2749,6 +3224,15 @@
       btn.textContent = '生成卡片';
       btn.addEventListener('click', (e) => { e.preventDefault(); runGenerate(); });
       panelTitle.appendChild(btn);
+
+      if (core.hasMyStatus && core.hasMyStatus()) {
+        const statusBtn = document.createElement('a');
+        statusBtn.className = `${ns}-pill`;
+        statusBtn.href = 'javascript:void(0);';
+        statusBtn.textContent = '我的记录';
+        statusBtn.addEventListener('click', (e) => { e.preventDefault(); runGenerate('status'); });
+        panelTitle.appendChild(statusBtn);
+      }
     }
   }
 

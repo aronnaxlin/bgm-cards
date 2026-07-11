@@ -1,13 +1,14 @@
 /**
  * Bangumi 分享卡片构建脚本
- * 将 core.js 内联嵌入三个发布用 wrapper，生成可直接粘贴的单文件脚本。
+ * 将 core.js + 共享 UI 层内联嵌入三个发布用 wrapper，生成可直接粘贴的单文件脚本。
  *
  * 用法（在项目根目录）：
  *   node userscript/build.js
  *
- * 输入（src/ 下的 UI 源码）：
- *   userscript/core.js
- *   userscript/src/share-card.native.src.js
+ * 输入：
+ *   userscript/core.js                              — 共享核心（取数据/绘制/导出）
+ *   userscript/src/share-card.ui.shared.js           — 共享 UI 层（createUI），三环境共用同一份
+ *   userscript/src/share-card.native.src.js          — 仅含各环境的 UserScript header（如有）
  *   userscript/src/share-card.tampermonkey.src.js
  *   userscript/src/share-card.bgm-gadget.src.js
  *
@@ -17,9 +18,9 @@
  *   userscript/share-card.bgm-gadget.js
  *
  * 构建规则：
- *   - 把 core.js 完整内容作为 IIFE 前置代码插入 wrapper 中。
- *   - 保留 wrapper 的 UserScript header（如果有）。
- *   - 在 core.js 之后自动注入启动壳：检查 BgmShareCardCore、调用 createUI(core).init()。
+ *   - 把 core.js + share-card.ui.shared.js 依次内联到 IIFE 中。
+ *   - 保留各 wrapper 的 UserScript header（如果有）。
+ *   - 自动注入启动壳：检查 BgmShareCardCore、调用 createUI(core).init()。
  */
 
 const fs = require('fs');
@@ -28,9 +29,9 @@ const path = require('path');
 const ROOT = path.resolve(__dirname);
 const SRC_DIR = path.join(ROOT, 'src');
 const CORE_PATH = path.join(ROOT, 'core.js');
+const UI_SHARED_PATH = path.join(SRC_DIR, 'share-card.ui.shared.js');
 
-// input：src/ 下的 UI 源码（*.src.js）
-// output：项目根 userscript/ 下可直接发布 / 粘贴的成品（含内联 core.js）
+// input：src/ 下仅含 header 的环境标记文件 → output：项目根 userscript/ 下的成品（含内联 core.js + 共享 UI）
 const WRAPPERS = [
   { input: 'share-card.native.src.js', output: 'share-card.native.user.js' },
   { input: 'share-card.tampermonkey.src.js', output: 'share-card.tampermonkey.user.js' },
@@ -61,14 +62,10 @@ function extractHeader(source) {
   return lines.slice(start, end + 1).join('\n');
 }
 
-function buildWrapper(coreSource, wrapperSource) {
+function buildWrapper(coreSource, uiSharedSource, wrapperSource) {
   const header = extractHeader(wrapperSource);
-  // 去掉 header 后只保留 UI 函数体
-  let uiBody = wrapperSource;
-  if (header) uiBody = uiBody.replace(header, '');
-  uiBody = uiBody
+  const uiBody = uiSharedSource
     .replace(/^\/\*\*[\s\S]*?\*\/$/m, '')   // 移除顶部注释块
-    .replace(/^\s*\/\/.*$/gm, '')             // 移除单行注释
     .trim();
 
   const bootstrap = `
@@ -109,7 +106,7 @@ function buildWrapper(coreSource, wrapperSource) {
 
   const banner = `// 本文件由 build.js 自动生成，请勿手动编辑
 // 生成时间：${new Date().toISOString()}
-// 内联核心来源：userscript/core.js
+// 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 `;
 
   if (header) {
@@ -127,12 +124,17 @@ function main() {
     console.error(`找不到源码目录：${SRC_DIR}`);
     process.exit(1);
   }
+  if (!fs.existsSync(UI_SHARED_PATH)) {
+    console.error(`找不到共享 UI 源码：${UI_SHARED_PATH}`);
+    process.exit(1);
+  }
 
   const coreSource = fs.readFileSync(CORE_PATH, 'utf8');
+  const uiSharedSource = fs.readFileSync(UI_SHARED_PATH, 'utf8');
 
   for (const { input, output } of WRAPPERS) {
     const wrapperSource = read(input);
-    const built = buildWrapper(coreSource, wrapperSource);
+    const built = buildWrapper(coreSource, uiSharedSource, wrapperSource);
     write(output, built);
     console.log(`✓ 已生成 ${output} (${(built.length / 1024).toFixed(1)} KB)`);
   }
