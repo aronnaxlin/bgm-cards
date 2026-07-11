@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-11T04:39:26.042Z
+// 生成时间：2026-07-11T05:04:07.184Z
 // 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -2343,20 +2343,28 @@
     ctx.font = `600 11px ${FONT_STACK.cn}`;
     ctx.fillStyle = LAYOUT.colors.textSub;
     ctx.fillText('我的评分', x + 20, y + 26);
-    // 大号分数（个人分为整数，直接绘制）
+    // 大号分数（个人分为整数）。用字形实际包围盒量出数字的真实上/下边界，
+    // 让星星顶部对齐数字顶、评价词底部对齐数字底——整组撑满数字高度，视觉更齐。
     const cy = y + 58;
+    const numStr = String(myScore);
     ctx.font = `800 40px ${FONT_STACK.mono}`;
     ctx.fillStyle = LAYOUT.colors.accent;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(myScore), x + 20, cy + 4);
-    const numW = ctx.measureText(String(myScore)).width;
-    const rx = x + 20 + numW + 20;
-    drawStars(ctx, myScore, rx, cy - 4, 13, LAYOUT.colors.accent);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    const m = ctx.measureText(numStr);
+    const asc = m.actualBoundingBoxAscent || 29;   // 基线到数字顶
+    const desc = m.actualBoundingBoxDescent || 0;  // 基线到数字底
+    const baseY = cy + (asc + desc) / 2 - desc;     // 让数字块整体在 cy 居中
+    const numTop = baseY - asc, numBottom = baseY + desc;
+    ctx.fillText(numStr, x + 20, baseY);
+    const rx = x + 20 + m.width + 20;
+    const starSize = 13;
+    drawStars(ctx, myScore, rx, numTop + starSize / 2, starSize, LAYOUT.colors.accent);
     if (word) {
       ctx.font = `700 15px ${FONT_STACK.cn}`;
       ctx.fillStyle = LAYOUT.colors.textMain;
       ctx.textBaseline = 'alphabetic';
-      ctx.fillText(word, rx, cy + 20);
+      ctx.fillText(word, rx, numBottom);   // CJK 字底 ≈ 基线，对齐数字底
     }
     // 进度并入面板底部：紧凑一行——左进度条 + 右「N / M 话」，垂直居中不贴边，
     // 省掉多余的「观看进度」标签（在评分面板里进度条本身已自解释）。
