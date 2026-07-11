@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-11T02:57:30.768Z
+// 生成时间：2026-07-11T04:16:20.156Z
 // 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -2289,8 +2289,29 @@
     drawStars(ctx, score, rightX - starsWidth(starSize), topY + 40, starSize, BGM_STAR);
   }
 
-  function drawVerdictPanel(ctx, x, y, w, myScore, word) {
-    const h = 92;
+  // 一行进度：左标签 + 右「N / M 话」+ 下方细进度条。
+  // 既用于独立进度面板，也用于并入评分面板底部（避免两个面板堆叠）。
+  function drawProgressRow(ctx, x, y, w, cur, total) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = `600 11px ${FONT_STACK.cn}`;
+    ctx.fillStyle = LAYOUT.colors.textSub;
+    ctx.fillText('观看进度', x, y);
+    ctx.textAlign = 'right';
+    ctx.font = `700 14px ${FONT_STACK.mono}`;
+    ctx.fillStyle = LAYOUT.colors.textMain;
+    ctx.fillText(`${cur} / ${total} 话`, x + w, y);
+    const barY = y + 14, barH = 6;
+    fillRoundRect(ctx, x, barY, w, barH, barH / 2, 'rgba(255,255,255,0.1)', SQ);
+    const pct = total > 0 ? Math.max(0, Math.min(1, cur / total)) : 0;
+    if (pct > 0) fillRoundRect(ctx, x, barY, Math.max(barH, w * pct), barH, barH / 2, LAYOUT.colors.accent, SQ);
+    ctx.textAlign = 'left';
+  }
+
+  // prog（{cur,total}）非空时把进度并入面板底部一行，面板整体加高，
+  // 保证中段最多只有这一个面板，不与独立进度面板堆叠造成拥挤。
+  function drawVerdictPanel(ctx, x, y, w, myScore, word, prog) {
+    const h = prog ? 122 : 92;
     drawGlassPanel(ctx, x, y, w, h, 22);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
@@ -2312,26 +2333,42 @@
       ctx.textBaseline = 'alphabetic';
       ctx.fillText(word, rx, cy + 20);
     }
+    // 进度并入面板底部：紧凑一行——左进度条 + 右「N / M 话」，垂直居中不贴边，
+    // 省掉多余的「观看进度」标签（在评分面板里进度条本身已自解释）。
+    if (prog) {
+      const dy = y + 88;
+      const lg = ctx.createLinearGradient(x + 20, 0, x + w - 20, 0);
+      lg.addColorStop(0, 'rgba(255,255,255,0)');
+      lg.addColorStop(0.5, 'rgba(255,255,255,0.1)');
+      lg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = lg;
+      ctx.fillRect(x + 20, dy, w - 40, 1);
+
+      const rowCy = dy + 20;
+      const numTxt = `${prog.cur} / ${prog.total} 话`;
+      ctx.font = `700 13px ${FONT_STACK.mono}`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = LAYOUT.colors.textSub;
+      ctx.fillText(numTxt, x + w - 20, rowCy);
+      const nW = ctx.measureText(numTxt).width;
+
+      const barX = x + 20, barH = 6;
+      const barW = (x + w - 20 - nW - 14) - barX;
+      const barY = rowCy - barH / 2;
+      fillRoundRect(ctx, barX, barY, barW, barH, barH / 2, 'rgba(255,255,255,0.1)', SQ);
+      const pct = prog.total > 0 ? Math.max(0, Math.min(1, prog.cur / prog.total)) : 0;
+      if (pct > 0) fillRoundRect(ctx, barX, barY, Math.max(barH, barW * pct), barH, barH / 2, LAYOUT.colors.accent, SQ);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
     return h;
   }
 
   function drawProgressPanel(ctx, x, y, w, cur, total) {
     const h = 68;
     drawGlassPanel(ctx, x, y, w, h, 18);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.font = `600 11px ${FONT_STACK.cn}`;
-    ctx.fillStyle = LAYOUT.colors.textSub;
-    ctx.fillText('观看进度', x + 20, y + 26);
-    ctx.textAlign = 'right';
-    ctx.font = `700 14px ${FONT_STACK.mono}`;
-    ctx.fillStyle = LAYOUT.colors.textMain;
-    ctx.fillText(`${cur} / ${total} 话`, x + w - 20, y + 26);
-    // 进度条
-    const barX = x + 20, barY = y + 40, barW = w - 40, barH = 6;
-    fillRoundRect(ctx, barX, barY, barW, barH, barH / 2, 'rgba(255,255,255,0.1)', SQ);
-    const pct = total > 0 ? Math.max(0, Math.min(1, cur / total)) : 0;
-    if (pct > 0) fillRoundRect(ctx, barX, barY, Math.max(barH, barW * pct), barH, barH / 2, LAYOUT.colors.accent, SQ);
+    drawProgressRow(ctx, x + 20, y + 26, w - 40, cur, total);
     return h;
   }
 
@@ -2351,6 +2388,13 @@
     const titleZh = (s.name_cn || s.name || '').trim();
     const titleJa = s.name_cn ? s.name : '';
     const bgmScore = s.rating?.score || 0;
+    // 进度/话数相关功能只对有「话数」概念的动画(2)与三次元(6)开放；
+    // 书籍/游戏/音乐(1/4/3)不显示进度条，也不显示「全 N 话 / 看完 X/X」。
+    const hasEpisodes = s.type === 2 || s.type === 6;
+    // 进度仅在「在看/搁置」且确实看过至少一集时才展示（progCur>0），
+    // 避免 0/N 的空进度条；有个人评分时并入评分面板，否则用独立进度面板。
+    const inProg = hasEpisodes && (data.status === 'doing' || data.status === 'on_hold') && data.progCur > 0 && data.progTotal > 0;
+    const progInfo = inProg ? { cur: data.progCur, total: data.progTotal } : null;
 
     // ---- 身份行 ----
     let y = 34;
@@ -2408,9 +2452,8 @@
         ctx.fillText(clip(ctx, titleJa, infoR - infoX), infoX, y + 56);
       }
       const meta = [mediaLabel(s.type, s.platform)];
-      if (data.progTotal) meta.push(`全 ${data.progTotal} 话`);
-      if (data.status === 'done') meta.push(`看完 ${data.progCur}/${data.progTotal}`);
-      else if ((data.status === 'doing' || data.status === 'on_hold') && data.progCur) meta.push(`看到 ${data.progCur}/${data.progTotal}`);
+      if (hasEpisodes && data.progTotal) meta.push(`全 ${data.progTotal} 话`);
+      if (hasEpisodes && data.status === 'done') meta.push(`看完 ${data.progCur}/${data.progTotal}`);
       ctx.font = `11px ${FONT_STACK.cn}`;
       ctx.fillStyle = LAYOUT.colors.textSub;
       ctx.fillText(clip(ctx, meta.join(' · '), infoR - infoX), infoX, y + 78);
@@ -2418,8 +2461,9 @@
 
       y += ph + 24;
 
-      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord) + 18; }
-      if ((data.status === 'doing' || data.status === 'on_hold') && data.progTotal) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 18; }
+      // 中段最多一个面板：有个人评分 → 评分面板（进度并入底部）；否则 → 独立进度面板
+      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord, progInfo) + 18; }
+      else if (inProg) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 18; }
 
       // ---- 短评（主体，占剩余空间）----
       const dateH = 30;
@@ -2487,8 +2531,9 @@
         ctx.textBaseline = 'alphabetic';
       }
       y += hh + 22;
-      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord) + 14; }
-      if ((data.status === 'doing' || data.status === 'on_hold') && data.progTotal) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 14; }
+      // 中段最多一个面板：有个人评分 → 评分面板（进度并入底部）；否则 → 独立进度面板
+      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord, progInfo) + 14; }
+      else if (inProg) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 14; }
     }
 
     // ---- 标记日期（贴 footer 上沿）----
