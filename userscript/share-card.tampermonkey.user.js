@@ -2,7 +2,7 @@
 // @name         Bangumi 条目分享卡片
 // @name:en      Bangumi Subject Share Card
 // @namespace    https://github.com/aronnaxlin/bgm-cards
-// @version      1.0.0
+// @version      1.1.0
 // @author       aronnaxlin
 // @description  在 Bangumi 条目页生成可下载 / 可复制的 PNG 分享卡片，支持受限条目，无需额外授权
 // @description:en  Generate downloadable/copyable PNG share cards on Bangumi subject pages, works on restricted subjects without extra auth
@@ -24,7 +24,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-11T04:16:20.170Z
+// 生成时间：2026-07-11T04:39:26.042Z
 // 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
