@@ -459,9 +459,13 @@ function createUI(core) {
 
   return {
     init() {
-      ensureStyles();
       registerConfig();
-      if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) injectButton();
+      // 样式只在真正注入卡片入口的页面（条目/角色/人物页）才写入，
+      // 其余页面（主页、目录等）不动 DOM，避免任何额外开销。
+      if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) {
+        ensureStyles();
+        injectButton();
+      }
     },
   };
 }

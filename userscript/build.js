@@ -83,8 +83,9 @@ function buildWrapper(coreSource, uiSharedSource, wrapperSource) {
   ${uiBody}
 
   function start() {
-    if (!/\\/(subject|character|person)\\/\\d+/.test(location.pathname)) return;
-    if (/^\\/m\\//.test(location.pathname)) return;
+    // 全站运行：设置面板（chiiLib Tab）需要在任意页面可用；
+    // 卡片入口是否注入由 init() 内部按页型（subject/character/person）自行判断。
+    if (/^\\/m\\//.test(location.pathname)) return; // 移动版页面跳过
     createUI(core).init();
   }
 

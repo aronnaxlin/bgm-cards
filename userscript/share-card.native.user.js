@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-11T05:04:07.171Z
+// 生成时间：2026-07-15T13:41:05.517Z
 // 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
@@ -455,21 +455,33 @@
     const tip = panel.querySelector('p.tip')?.textContent?.trim() || '';
     const collDate = (tip.split(/\s+/)[0] || '').replace(/\//g, '-');
 
-    // 用户身份：CHOBITS_UID 匹配自己的头像，避免混入评论区他人头像
+    // 用户身份：dock 首项就是登录用户自己的入口，据此拿昵称和用户名。
     const uid = (typeof window !== 'undefined' && window.CHOBITS_UID) || 0;
+    const userLink = document.querySelector('#dock li.first a[href*="/user/"]');
+    const nick = userLink?.textContent?.trim() || 'Bangumi 用户';
+    // 用户名（登录名/handle）取自 /user/<username>，与昵称不同；缺失时回退到 uid
+    const username = (userLink?.getAttribute('href') || '').match(/\/user\/([^/?#]+)/)?.[1] || String(uid || '');
+
+    // 头像：锁定「外层链接指向自己」的头像，避免混入评论区他人头像；同时匹配
+    // uid 和用户名两种链接形式（dock 用用户名、别处可能用 uid）。这样默认头像
+    // （URL 为 /pic/user/l/icon.jpg，不含 uid）也能取到，不会漏掉。
     let avatar = '';
-    if (uid) {
-      const av = document.querySelector(`.avatarNeue[style*="/${uid}_"], .avatarNeue[style*="/${uid}."]`);
+    {
+      const ids = [uid, username].filter(Boolean).map(s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const selfHref = ids.length ? new RegExp('/user/(?:' + ids.join('|') + ')(?:$|[/?#])') : null;
+      const av = (selfHref && [...document.querySelectorAll('.avatarNeue:not(.coverNeue)')]
+          .find(el => selfHref.test(el.closest('a')?.getAttribute('href') || '')))
+        // 兜底：老逻辑按头像 URL 里的 uid 匹配（自定义头像）
+        || (uid && document.querySelector(`.avatarNeue[style*="/${uid}_"], .avatarNeue[style*="/${uid}."]`));
       const m = av && (av.getAttribute('style') || '').match(/url\(['"]?([^'")]+)/);
       if (m) avatar = formatUserAvatarUrl(m[1].split('?')[0], 200);
     }
-    const nick = document.querySelector('#dock li.first a[href*="/user/"]')?.textContent?.trim() || 'Bangumi 用户';
 
     return {
       subject, status, statusLabel, tone,
       myScore, myScoreWord, comment,
       progCur, progTotal, collDate,
-      user: { uid, nick, avatar },
+      user: { uid, nick, username, avatar },
     };
   }
 
@@ -2426,7 +2438,7 @@
     ctx.fillText(data.user.nick, idX, y + 18);
     ctx.font = `12px ${FONT_STACK.mono}`;
     ctx.fillStyle = LAYOUT.colors.textSub;
-    ctx.fillText('@' + (data.user.nick || '').toLowerCase(), idX, y + 36);
+    ctx.fillText('@' + (data.user.username || data.user.nick || '').toLowerCase(), idX, y + 40);
     drawStatusPill(ctx, data.statusLabel, data.tone, LAYOUT.w - PAD, avCy);
 
     y = 34 + avR * 2 + 26;   // 106
@@ -2467,26 +2479,34 @@
       ctx.fillText(clip(ctx, meta.join(' · '), infoR - infoX), infoX, y + 78);
       if (bgmScore > 0) drawBgmBadge(ctx, bgmScore, LAYOUT.w - PAD, y + 12);
 
-      y += ph + 24;
+      // 中段面板上下留白保持一致（PANEL_GAP）：上方 24 来自条目条，下方也用 24。
+      const PANEL_GAP = 24;
+      y += ph + PANEL_GAP;
 
       // 中段最多一个面板：有个人评分 → 评分面板（进度并入底部）；否则 → 独立进度面板
-      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord, progInfo) + 18; }
-      else if (inProg) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + 18; }
+      if (data.myScore > 0) { y += drawVerdictPanel(ctx, PAD, y, CW, data.myScore, data.myScoreWord, progInfo) + PANEL_GAP; }
+      else if (inProg) { y += drawProgressPanel(ctx, PAD, y, CW, data.progCur, data.progTotal) + PANEL_GAP; }
 
       // ---- 短评（主体，占剩余空间）----
       const dateH = 30;
-      const commentTop = y + 8;
-      const commentMaxH = CONTENT_BOTTOM - 20 - dateH - commentTop;
-      const lineH = 26;
-      const maxLines = Math.max(2, Math.floor(commentMaxH / lineH));
-      // 装饰引号
-      ctx.font = `800 60px Georgia, ${FONT_STACK.cn}`;
+      // 装饰引号：小号，用字形包围盒把「墨迹顶」顶到 y 处，使其与面板下缘的留白 = PANEL_GAP。
+      // 引号墨迹整体在基线之上（descent 为负），据此算出墨迹底，短评正文再往下留一点间距。
+      const quoteSize = 42;
+      ctx.font = `800 ${quoteSize}px Georgia, ${FONT_STACK.cn}`;
+      const qm = ctx.measureText('“');
+      const qAsc = qm.actualBoundingBoxAscent || quoteSize * 0.74;
+      const qDesc = qm.actualBoundingBoxDescent || -quoteSize * 0.4;
       ctx.fillStyle = LAYOUT.colors.accent;
       ctx.globalAlpha = 0.5;
       ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-      ctx.fillText('“', PAD, commentTop + 30);
+      ctx.fillText('“', PAD, y + qAsc);   // 墨迹顶 ≈ y
       ctx.globalAlpha = 1;
-      drawText(ctx, data.comment, PAD, commentTop + 40, {
+
+      const commentTop = y + qAsc + qDesc + 12;   // 引号墨迹底 + 12
+      const commentMaxH = CONTENT_BOTTOM - 20 - dateH - commentTop;
+      const lineH = 26;
+      const maxLines = Math.max(2, Math.floor(commentMaxH / lineH));
+      drawText(ctx, data.comment, PAD, commentTop, {
         font: `400 15px ${FONT_STACK.cn}`, color: 'rgba(245,245,247,0.9)',
         maxWidth: CW, lineHeight: lineH, maxLines, kinsoku: true, baseline: 'top',
       });
@@ -3266,16 +3286,21 @@
 
   return {
     init() {
-      ensureStyles();
       registerConfig();
-      if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) injectButton();
+      // 样式只在真正注入卡片入口的页面（条目/角色/人物页）才写入，
+      // 其余页面（主页、目录等）不动 DOM，避免任何额外开销。
+      if (core.parseSubjectId() || core.parseCharacterId() || core.parsePersonId()) {
+        ensureStyles();
+        injectButton();
+      }
     },
   };
 }
 
   function start() {
-    if (!/\/(subject|character|person)\/\d+/.test(location.pathname)) return;
-    if (/^\/m\//.test(location.pathname)) return;
+    // 全站运行：设置面板（chiiLib Tab）需要在任意页面可用；
+    // 卡片入口是否注入由 init() 内部按页型（subject/character/person）自行判断。
+    if (/^\/m\//.test(location.pathname)) return; // 移动版页面跳过
     createUI(core).init();
   }
 

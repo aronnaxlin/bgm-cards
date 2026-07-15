@@ -4,15 +4,9 @@
 // @version      1.1.0
 // @author       aronnaxlin
 // @description  在 Bangumi 条目页生成可下载 / 可复制的 PNG 分享卡片。含第三方二维码 API。
-// @match        *://bgm.tv/subject/*
-// @match        *://bangumi.tv/subject/*
-// @match        *://chii.in/subject/*
-// @match        *://bgm.tv/character/*
-// @match        *://bangumi.tv/character/*
-// @match        *://chii.in/character/*
-// @match        *://bgm.tv/person/*
-// @match        *://bangumi.tv/person/*
-// @match        *://chii.in/person/*
+// @match        *://bgm.tv/*
+// @match        *://bangumi.tv/*
+// @match        *://chii.in/*
 // @run-at       document-idle
 // ==/UserScript==
 

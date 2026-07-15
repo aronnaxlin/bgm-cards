@@ -10,15 +10,9 @@
 // @homepageURL  https://github.com/aronnaxlin/bgm-cards
 // @supportURL   https://github.com/aronnaxlin/bgm-cards/issues
 // @icon         https://bgm.tv/img/favicon.ico
-// @match        *://bgm.tv/subject/*
-// @match        *://bangumi.tv/subject/*
-// @match        *://chii.in/subject/*
-// @match        *://bgm.tv/character/*
-// @match        *://bangumi.tv/character/*
-// @match        *://chii.in/character/*
-// @match        *://bgm.tv/person/*
-// @match        *://bangumi.tv/person/*
-// @match        *://chii.in/person/*
+// @match        *://bgm.tv/*
+// @match        *://bangumi.tv/*
+// @match        *://chii.in/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
