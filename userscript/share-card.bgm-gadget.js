@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bangumi 条目分享卡片（超合金组件版）
 // @namespace    https://github.com/aronnaxlin/bgm-cards
-// @version      1.1.0
+// @version      1.1.1
 // @author       aronnaxlin
 // @description  在 Bangumi 条目页生成可下载 / 可复制的 PNG 分享卡片。含第三方二维码 API。
 // @match        *://bgm.tv/*
@@ -11,7 +11,7 @@
 // ==/UserScript==
 
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-15T13:41:05.530Z
+// 生成时间：2026-07-15T13:48:34.521Z
 // 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑

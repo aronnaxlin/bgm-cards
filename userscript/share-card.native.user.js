@@ -1,5 +1,5 @@
 // 本文件由 build.js 自动生成，请勿手动编辑
-// 生成时间：2026-07-15T13:41:05.517Z
+// 生成时间：2026-07-15T13:48:34.507Z
 // 内联来源：userscript/core.js + userscript/src/share-card.ui.shared.js
 /**
  * Bangumi 条目分享卡片 - 核心渲染逻辑
